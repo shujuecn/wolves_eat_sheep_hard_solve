@@ -1,0 +1,21 @@
+# Build
+build/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+
+# Tablebase output (large binaries)
+data/tb/*.bin
+
+# Keep directory structure
+!data/tb/.gitkeep
