@@ -354,3 +354,78 @@ k= 8: 1,470,942,000     k=13: 2,288,132,000
 - 走法/终局：`src/board.cpp`（`gen_moves` / `apply` / `is_terminal`）
 - 主入口：`tools/solve_all.cpp`；一键脚本：`run_solve.sh`
 - 独立校验：`tools/check_tb.cpp`
+
+---
+
+## 11. 终端工具：复刻游戏与表库解棋（2024-08 新增）
+
+两个新工具的定位与用法（不影响正在运行的求解进程：均为**单线程 + 只读 mmap**，
+只加载「文件大小 == 64 + bucket_size(k)」且头部 `completed==1` 的完成桶，
+求解程序写桶时文件不落盘，因此绝无读写冲突）：
+
+### 11.1 `./build/play` —— C++ 复刻 Python GUI 的双人对局（终端版）
+
+- 规则与 `wolves_eat_sheep_game/rules.py` 完全一致：狼先行、正交移动、
+  狼跳吃（隔空格吃两格外的羊）、羊<4 狼胜、三狼被堵羊胜、
+  **150 步平局**、**双方同一棋子连续往返 ≥5 次判平**（闲步规则已移植）。
+- 输入：`a1..e5` 坐标（列 a-e × 行 1-5）。单格=选中棋子（合法落点金色高亮），
+  再输目标格落子；也可一次两格 `b3 c3` 直接走子。
+- 命令：`u` 悔棋，`r` 旋转 180°（与 Python GUI 的旋转一致），`b` 重绘，`h` 帮助，`q` 退出。
+- 状态行仿 GUI：`狼方回合（红狼行动）第 N 步` / `羊方回合（黑羊行动）` / 终局原因。
+
+### 11.2 `./build/solve_term` —— 终端解棋器（表库咨询 / 复盘点评 / 最优路线）
+
+- 启动扫描 `--data-dir`（默认 `data/tb_test`）已求解桶并显示（当前 k=4..10 可用，
+  k=11..15 产出后自动纳入，也可 `refresh` 重扫）。
+- **结论**：任意局面给出 `表库结论: 狼胜（最快 N 步）/羊胜/和棋/未求解`。
+  N = 从当前局面算起的半回合数（双方各走一手计 2），吃子算 1 步。
+- **最优应手**：`ai`（或 `best`）列出当前回合方全部走法及后继结果，
+  ★ 标记保持 DTM 最优的着法；`play` 由表库直接走出最优应手（人机对练）。
+- **最优路线**：`pv [n]` 打印双方都按 DTM 最优的完整路线（默认 20 步）。
+- **复盘点评**：`m a1 b2` 走子后自动点评上一步——
+  `此步为最优` / `错失胜机，此步后成和棋` / `从和棋送成必败` / `妙手逆转` 等，
+  并给出下一步参考（含距离）。
+- **摆盘**：`setup <fen>`（FEN 与 `pos` 输出互逆）或交互逐行输入；`load <i>` / `list`
+  载入预设练习局面（8 个，k=4..6 的狼胜/羊胜/速胜/消耗战）。
+- 未求解局面（如初始 k=15）：结论区提示 `尚未求解`，`m` 仍可正常走子，
+  `play/pv` 会明确拒绝而非瞎猜。
+
+解棋脚本命令一览（`h` 内亦有）：
+
+```
+m a1 b2   走子（复盘时交替输入双方走法，自动点评）
+ai/best   全部走法评估 + ★ 最优应手
+play      表库走出最优应手
+pv [n]    最优路线（默认 20 步）
+setup     摆盘（FEN 或逐行）；load/list 预设；pos 打印 FEN
+undo/rot/new/refresh  悔棋 / 旋转 / 初始局面 / 重扫桶
+```
+
+### 11.3 输入与输出设计的取舍（对应需求的三个问题）
+
+1. **对手走棋怎么输入？** 三种模式，同一组命令覆盖：
+   - *人机对练*：人走 `m`，表库 `play`（或 `--auto` 开局后全自动对弈）；
+   - *实录复盘*：双方轮流 `m`，每步自动点评（最优/错失/逆转，含剩余步数）；
+   - *摆盘评估*：`setup`/`load` 直接给结论 + `pv` 最优路线。
+   坐标统一 `a1..e5`，兼容 `r1c2`、`12` 数字写法。
+2. **结果怎么告诉用户？** 每次走子/查询都输出：棋盘（红 W / 青 S）+ 局面摘要
+   （k、轮到谁、已走步数）+ `表库结论`（胜方 + 最快步数或和棋/未求解）+ 上一步点评
+   + 当前方所有走法评估（★ 最优）。结论**绝对结局**（与哪方行棋无关），
+   距离为当前方走到终局的最短（胜）/最长（败）半回合数。
+3. **最优路线怎么给？** `pv` 给出双方均 DTM 最优的着法序列，每步标注后继结论与
+   剩余距离；`ai` 给出的 ★ 集合即任意最优下一手（多个等价最优时全部列出）。
+
+### 11.4 构建
+
+设备无 make/apt，用 /tmp/gcc-local 的手工命令（同 §7 环境）：
+
+```bash
+export LD_LIBRARY_PATH=/tmp/gcc-local/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH
+CXX=/tmp/gcc-local/usr/bin/g++
+CXXFLAGS="-std=c++20 -O3 -march=native -flto -idirafter /tmp/gcc-local/usr/include -idirafter /tmp/gcc-local/usr/include/x86_64-linux-gnu"
+LDFLAGS="-flto -L/tmp/gcc-local/usr/lib/x86_64-linux-gnu -Wl,-rpath,/tmp/gcc-local/usr/lib/x86_64-linux-gnu"
+$CXX $CXXFLAGS -Iinclude tools/play.cpp build/board.o $LDFLAGS -o build/play
+$CXX $CXXFLAGS -Iinclude tools/solve_term.cpp build/board.o build/encode.o build/symmetry.o build/tablebase.o $LDFLAGS -o build/solve_term
+```
+
+有 make 的机器：`make play` / `make solve-term`（新目标已在 Makefile）。

@@ -44,9 +44,9 @@ SOLVER_RETRO_OBJ := $(BUILD_DIR)/solver_retro.o
 TARGETS := $(BUILD_DIR)/solve_all $(BUILD_DIR)/solve_retro \
            $(BUILD_DIR)/dump_opening_book \
            $(BUILD_DIR)/verify $(BUILD_DIR)/crosscheck $(BUILD_DIR)/selfcheck \
-           $(BUILD_DIR)/check_tb
+           $(BUILD_DIR)/check_tb $(BUILD_DIR)/play $(BUILD_DIR)/solve_term
 
-.PHONY: all clean test solve dump-book verify check-tb help
+.PHONY: all clean test solve dump-book verify check-tb play solve-term help
 
 all: $(TARGETS)
 
@@ -110,6 +110,15 @@ $(BUILD_DIR)/verify: $(TOOLS_DIR)/verify.cpp \
 $(BUILD_DIR)/check_tb: $(TOOLS_DIR)/check_tb.cpp $(BOARD_OBJ) $(ENCODE_OBJ) | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I$(INCLUDE_DIR) $< $(BOARD_OBJ) $(ENCODE_OBJ) $(LDFLAGS) -o $@
 
+$(BUILD_DIR)/play: $(TOOLS_DIR)/play.cpp $(BOARD_OBJ) | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -I$(INCLUDE_DIR) $< $(BOARD_OBJ) $(LDFLAGS) -o $@
+
+$(BUILD_DIR)/solve_term: $(TOOLS_DIR)/solve_term.cpp \
+		$(BOARD_OBJ) $(ENCODE_OBJ) $(SYMMETRY_OBJ) $(TABLEBASE_OBJ) | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -I$(INCLUDE_DIR) $< \
+		$(BOARD_OBJ) $(ENCODE_OBJ) $(SYMMETRY_OBJ) $(TABLEBASE_OBJ) \
+		$(LDFLAGS) -o $@
+
 # 测试
 test: $(BUILD_DIR)/selfcheck $(BUILD_DIR)/crosscheck
 	@echo "=== Running selfcheck ==="
@@ -138,6 +147,14 @@ verify: $(BUILD_DIR)/verify | $(DATA_DIR)
 check-tb: $(BUILD_DIR)/check_tb | $(DATA_DIR)
 	$(BUILD_DIR)/check_tb --data-dir $(DATA_DIR) --threads $$(nproc)
 
+# 终端复刻游戏（双人）
+play: $(BUILD_DIR)/play
+	$(BUILD_DIR)/play
+
+# 终端解棋器（基于表库，只读；默认读 data/tb_test）
+solve-term: $(BUILD_DIR)/solve_term
+	$(BUILD_DIR)/solve_term --data-dir data/tb_test
+
 # 清理
 clean:
 	rm -rf $(BUILD_DIR)
@@ -153,6 +170,8 @@ help:
 	@echo "  dump-book  Export opening book JSON"
 	@echo "  verify     Verify tablebase consistency"
 	@echo "  check-tb   Independent per-state minimax check of k=4/k=5"
+	@echo "  play       Terminal game (C++ port of the Python GUI)"
+	@echo "  solve-term Terminal tablebase advisor (read-only, data/tb_test)"
 	@echo "  clean      Remove build artifacts"
 	@echo ""
 	@echo "Examples:"
