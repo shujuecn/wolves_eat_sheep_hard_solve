@@ -44,9 +44,10 @@ SOLVER_RETRO_OBJ := $(BUILD_DIR)/solver_retro.o
 TARGETS := $(BUILD_DIR)/solve_all $(BUILD_DIR)/solve_retro \
            $(BUILD_DIR)/dump_opening_book \
            $(BUILD_DIR)/verify $(BUILD_DIR)/crosscheck $(BUILD_DIR)/selfcheck \
-           $(BUILD_DIR)/check_tb $(BUILD_DIR)/play $(BUILD_DIR)/solve_term
+           $(BUILD_DIR)/check_tb $(BUILD_DIR)/play $(BUILD_DIR)/solve_term \
+           $(BUILD_DIR)/stat_tb
 
-.PHONY: all clean test solve dump-book verify check-tb play solve-term help
+.PHONY: all clean test solve dump-book verify check-tb play solve-term stat-tb help
 
 all: $(TARGETS)
 
@@ -119,6 +120,9 @@ $(BUILD_DIR)/solve_term: $(TOOLS_DIR)/solve_term.cpp \
 		$(BOARD_OBJ) $(ENCODE_OBJ) $(SYMMETRY_OBJ) $(TABLEBASE_OBJ) \
 		$(LDFLAGS) -o $@
 
+$(BUILD_DIR)/stat_tb: $(TOOLS_DIR)/stat_tb.cpp | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -I$(INCLUDE_DIR) $< $(LDFLAGS) -o $@
+
 # 测试
 test: $(BUILD_DIR)/selfcheck $(BUILD_DIR)/crosscheck
 	@echo "=== Running selfcheck ==="
@@ -155,6 +159,10 @@ play: $(BUILD_DIR)/play
 solve-term: $(BUILD_DIR)/solve_term
 	$(BUILD_DIR)/solve_term --data-dir data/tb_test
 
+# 表库结果分布统计（只读，自动跳过未完成桶）
+stat-tb: $(BUILD_DIR)/stat_tb
+	$(BUILD_DIR)/stat_tb --data-dir data/tb_test
+
 # 清理
 clean:
 	rm -rf $(BUILD_DIR)
@@ -172,6 +180,7 @@ help:
 	@echo "  check-tb   Independent per-state minimax check of k=4/k=5"
 	@echo "  play       Terminal game (C++ port of the Python GUI)"
 	@echo "  solve-term Terminal tablebase advisor (read-only, data/tb_test)"
+	@echo "  stat-tb    Result distribution over completed buckets (--raw)"
 	@echo "  clean      Remove build artifacts"
 	@echo ""
 	@echo "Examples:"
