@@ -211,7 +211,7 @@ int main(int argc, char** argv) {
         if (cmd == "u") { do_undo(); continue; }
 
         if (!g.winner_reason.empty()) {
-            std::cout << gold() << "对局已结束（" << g.winner_reason << "），输入 'n' 无效；请重启程序或 'q' 退出。"
+            std::cout << gold() << "对局已结束（" << g.winner_reason << "）。输入 u 可悔棋续玩，或 q 退出。"
                       << reset() << "\n";
             continue;
         }
@@ -221,8 +221,21 @@ int main(int argc, char** argv) {
         if (toks.size() == 1 && parse_cell(cmd, r1, c1)) {
             int idx = pos(r1, c1);
             Piece p = piece_at(g.s, idx);
-            if (p == Piece::NONE) { std::cout << gray() << "（该格无棋子）" << reset() << "\n"; continue; }
-            if ((p == Piece::WOLF) != g.s.turn) { std::cout << gray() << "（不是当前回合方的棋子）" << reset() << "\n"; continue; }
+            if (p == Piece::NONE) {
+                selected = -1; targets.clear();  // 意外点击空格 = 取消选中
+                std::cout << gray() << "（该格无棋子，已取消选中）" << reset() << "\n";
+                continue;
+            }
+            if ((p == Piece::WOLF) != g.s.turn) {
+                selected = -1; targets.clear();
+                std::cout << gray() << "（不是当前回合方的棋子，已取消选中）" << reset() << "\n";
+                continue;
+            }
+            if (idx == selected) {  // 再点同一棋子 = 取消选中
+                selected = -1; targets.clear();
+                std::cout << gray() << "（已取消选中）" << reset() << "\n";
+                continue;
+            }
             selected = idx;
             targets.clear();
             for (const Move& m : gen_moves_from(g.s, idx)) targets.push_back(m.to);
