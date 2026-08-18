@@ -1,5 +1,8 @@
 # Build
 build/
+*.o
+*.a
+*.so
 
 # IDE
 .idea/
@@ -14,8 +17,25 @@ build/
 __pycache__/
 *.pyc
 
-# Tablebase output (large binaries)
+# 表库输出（大二进制）
 data/tb/*.bin
+data/tb_test/
+data/tb_test/*.bin
 
 # Keep directory structure
 !data/tb/.gitkeep
+
+# 求解日志
+solve_log_*.log
+solve_summary.txt
+
+# 工具链安装包 / 临时下载
+*.tar.gz
+*.deb
+get-pip.py
+
+# Agent 运行环境杂项
+node_modules/
+dsh-TUI/
+package.json
+package-lock.json
