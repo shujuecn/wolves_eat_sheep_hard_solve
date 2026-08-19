@@ -27,7 +27,7 @@ class GameState:
     def __init__(
         self,
         idle_limit: int | None = IDLE_LIMIT,
-        max_moves: int = MAX_MOVES,
+        max_moves: int | None = MAX_MOVES,
     ) -> None:
         self.idle_limit = idle_limit
         self.max_moves = max_moves
@@ -205,7 +205,7 @@ class GameState:
             )
         ):
             self.winner = DRAW
-        if self.winner is None and self.move_count >= self.max_moves:
+        if self.winner is None and self.max_moves is not None and self.move_count >= self.max_moves:
             self.winner = DRAW
         if self.winner is None:
             self.turn = SHEEP if self.turn == WOLF else WOLF

@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """web/server.py — 狼羊棋 · 网页版后端（纯 Python 标准库，无第三方依赖）
 
-- POST /api：choose / move / advance / undo / switch / restart / state
+- POST /api：choose / move / advance / undo / switch / restart / endless / state
+- 自动存档：对局结束或手动重开时，自动把对局记录落盘到 data/saved_games/game_*.json
+  （JSON 含每步走子、吃子与走完后的表库最优解结论，便于回放分析）。
+- 无尽模式（endless）：勾选后解除 150 步上限，超过后仍继续对局，
+  最优解提示与对局记录不受影响（表库结论只依赖局面，与步数无关）。
 - 交互节奏：玩家走子后服务端**不立即让模型应手**（响应里 model_to_move=true），
   网页端等待 1 秒后再调 advance，模型才走子（符合“玩家行棋后隔一秒再由模型走棋”）。
 - 每步响应包含：
@@ -27,6 +31,8 @@ import mmap
 import os
 import re
 import sys
+import time
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -38,6 +44,7 @@ from rules import GameState, WOLF, SHEEP, DRAW  # noqa: E402
 import hard_solve_fast as hsf  # noqa: E402
 
 INDEX_PATH = Path(__file__).parent / "index.html"
+SAVED_DIR = ROOT / "data" / "saved_games"   # 自动保存的对局记录（JSON 文件）
 
 TB_RESULT_LABEL = {hsf.WOLF_WIN: "狼胜", hsf.SHEEP_WIN: "羊胜", hsf.DRAW: "和棋", hsf.UNKNOWN: "未知"}
 
@@ -155,14 +162,14 @@ class Tablebase:
 # FEN 解析（悔棋恢复局面用；原 ai_engine.game_from_fen 已随 DQN 一并移除以
 # 去除 torch/ai_engine 依赖，表库引擎不需要神经网络）
 # ============================================================
-def game_from_fen(fen: str) -> GameState:
+def game_from_fen(fen: str, max_moves: int | None = 150) -> GameState:
     parts = fen.split()
     if len(parts) < 2:
         raise ValueError(f"bad fen: {fen!r}")
     rows = parts[0].split("/")
     if len(rows) != 5:
         raise ValueError(f"bad fen rows: {fen!r}")
-    game = GameState(idle_limit=None, max_moves=150)
+    game = GameState(idle_limit=None, max_moves=max_moves)
     game.board = [[None for _ in range(5)] for _ in range(5)]
     for r, row in enumerate(rows):
         c = 0
@@ -211,13 +218,69 @@ class Session:
     def __init__(self, tb: Tablebase):
         self.tb = tb
         self.player_side = None  # None = 尚未选择执棋方
-        self.game = GameState(idle_limit=None, max_moves=150)
+        self.endless = False     # 无尽模式：勾选后解除 150 步上限，超过仍继续提示/记录
+        self.game = self._new_game()
         self.history = [game_to_fen(self.game)]
         self.log = []            # 对局记录（每步一行，含走完后局面的最优解结论）
         self.model_move = None   # ((r1,c1),(r2,c2)) 最近一次"已经执行"的模型走子
         self.model_capture = None
         self.model_note = ""
         self.model_pending = False  # 玩家刚走完，模型等待 advance 才应手
+        self.record_saved = False   # 当前局是否已自动存档（终局/重开只存一次）
+        self.last_saved = None      # 最近一次存档文件名
+
+    def _new_game(self) -> GameState:
+        """按当前无尽模式开关新建一局（无尽 → 不设步数上限）。"""
+        return GameState(idle_limit=None, max_moves=None if self.endless else 150)
+
+    # ---------- 自动存档 ----------
+    def save_record(self) -> str | None:
+        """把当前对局记录写入 data/saved_games/game_*.json，返回文件名或 None。
+
+        记录为一次性 JSON：时间、执棋方、结果、步数、终局 FEN，以及每一步的
+        完整对局记录（含吃子、走完后的表库最优解结论），便于回放与分析。
+        """
+        if not self.log:
+            return None
+        SAVED_DIR.mkdir(parents=True, exist_ok=True)
+        g = self.game
+        if g.winner == WOLF:
+            result = "狼胜"
+            reason = "羊被吃到不足 4 只"
+        elif g.winner == SHEEP:
+            result = "羊胜"
+            reason = "三只狼均无法移动"
+        elif g.winner == DRAW:
+            result = "和棋"
+            reason = "双方合计 150 步"
+        else:
+            result = "未完成"
+            reason = "手动重开"
+        rid = time.strftime("%Y%m%d_%H%M%S") + "_" + uuid.uuid4().hex[:6]
+        record = {
+            "id": rid,
+            "saved_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "player_side": ("wolf" if self.player_side == WOLF else
+                            "sheep" if self.player_side == SHEEP else None),
+            "endless": self.endless,
+            "result": result,
+            "reason": reason,
+            "move_count": g.move_count,
+            "final_fen": game_to_fen(g),
+            "moves": self.log,
+        }
+        name = f"game_{rid}.json"
+        path = SAVED_DIR / name
+        path.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
+        self.record_saved = True
+        self.last_saved = name
+        return name
+
+    def saved_count(self) -> int:
+        try:
+            return len(list(SAVED_DIR.glob("game_*.json")))
+        except OSError:
+            return 0
 
     # ---------- 引擎：选一步 ----------
     def phase(self) -> str:
@@ -275,14 +338,19 @@ class Session:
 
     # ---------- 操作 ----------
     def choose_side(self, side: str):
+        # 若正在进行的对局还没存档，先存档再开新局（防止刷新页面/换边丢弃记录）
+        if self.log and not self.record_saved:
+            self.save_record()
         self.player_side = WOLF if side == "wolf" else SHEEP
-        self.game = GameState(idle_limit=None, max_moves=150)
+        self.game = self._new_game()
         self.history = [game_to_fen(self.game)]
         self.log = []
         self.model_move = None
         self.model_capture = None
         self.model_note = ""
         self.model_pending = True  # 若你执羊，模型(狼)先行，1 秒后由 advance 走第一步
+        self.record_saved = False
+        self.last_saved = None
 
     def move(self, fr, to):
         if self.game.winner is not None:
@@ -300,6 +368,7 @@ class Session:
         self.model_capture = None
         self.model_note = ""
         self._push_log(side, fr_c[0], fr_c[1], to_c[0], to_c[1], captured)
+        self.history.append(game_to_fen(self.game))   # 与 step_model 对齐：每走一步记一条
         self.model_pending = True
         return True, None
 
@@ -307,9 +376,11 @@ class Session:
         if len(self.history) < 2:
             return False, "没有可悔的棋"
         self.history.pop()
-        self.game = game_from_fen(self.history[-1])
-        keep = set(self.history)
-        self.log = [e for e in self.log if e["fen"] in keep]
+        max_moves = self.game.max_moves
+        self.game = game_from_fen(self.history[-1], max_moves=max_moves)
+        # 对局记录按“步数序”截断：每步恰好一条日志、一条 history FEN，严格对齐，
+        # 不再按 FEN 集合匹配（同局面复现/玩家行棋不入 history 会导致误删整段记录）。
+        self.log = self.log[:len(self.history) - 1]
         self.model_move = None
         self.model_capture = None
         self.model_note = ""
@@ -326,14 +397,30 @@ class Session:
         self.model_pending = True
         return True, None
 
+    def set_endless(self, on: bool):
+        """开/关无尽模式：解除 150 步上限；若已因 150 步判和，解除终局继续下；
+        若已超过 150 步后关掉无尽模式，立即按 150 步上限判和。"""
+        self.endless = bool(on)
+        self.game.max_moves = None if self.endless else 150
+        if on and self.game.winner == DRAW:
+            self.game.winner = None
+            self.model_pending = True
+        elif not on and self.game.winner is None and self.game.move_count >= 150:
+            self.game.winner = DRAW
+        return True, None
+
     def restart(self):
-        self.game = GameState(idle_limit=None, max_moves=150)
+        # 手动重开前把未存档的当前局自动保存（终局局已在 snapshot 里存过则跳过）
+        if not self.record_saved:
+            self.save_record()
+        self.game = self._new_game()
         self.history = [game_to_fen(self.game)]
         self.log = []
         self.model_move = None
         self.model_capture = None
         self.model_note = ""
         self.model_pending = True
+        self.record_saved = False
         return True, None
 
     # ---------- 分析 ----------
@@ -416,6 +503,9 @@ class Session:
     # ---------- 输出 ----------
     def snapshot(self) -> dict:
         g = self.game
+        # 对局结束 → 自动保存对局记录（仅存一次）
+        if g.winner is not None and not self.record_saved:
+            self.save_record()
         board = [g.board[i // 5][i % 5] for i in range(25)]
         verdict = {"known": False, "label": ""}
         known, result, dist = self.tb.lookup(g)
@@ -435,6 +525,10 @@ class Session:
             "turn": "wolf" if g.turn == WOLF else "sheep",
             "player_side": ("wolf" if self.player_side == WOLF else
                             "sheep" if self.player_side == SHEEP else None),
+            "endless": self.endless,
+            "record_saved": self.record_saved,
+            "last_saved": self.last_saved,
+            "saved_count": self.saved_count(),
             "sheep": g.sheep_count,
             "move_count": g.move_count,
             "phase": self.phase(),
@@ -517,6 +611,11 @@ class Handler(BaseHTTPRequestHandler):
                     return
             elif cmd == "restart":
                 session.restart()
+            elif cmd == "endless":
+                ok, err = session.set_endless(bool(data.get("on", False)))
+                if not ok:
+                    self._send(200, json.dumps({"ok": False, "error": err}).encode())
+                    return
             elif cmd != "state":
                 self._send(400, json.dumps({"ok": False, "error": f"unknown cmd {cmd}"}).encode())
                 return
