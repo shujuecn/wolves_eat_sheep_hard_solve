@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
 """web/server.py — 狼羊棋 · 网页版后端（纯 Python 标准库，无第三方依赖）
 
-- POST /api：choose / move / advance / undo / switch / restart / endless / state
+- POST /api：choose / move / advance / undo / switch / restart / endless / mode / model_move / state
 - 自动存档：对局结束或手动重开时，自动把对局记录落盘到 data/saved_games/game_*.json
   （JSON 含每步走子、吃子与走完后的表库最优解结论，便于回放分析）。
 - 无尽模式（endless）：勾选后解除 150 步上限，超过后仍继续对局，
   最优解提示与对局记录不受影响（表库结论只依赖局面，与步数无关）。
+- 手动模式（mode/manual_move）：开 → 模型不自动应手，右侧给出推荐最优解，
+  由玩家点选一条替模型走棋；关（默认）→ 模型自动应手。
+- 模型选步（防 5 次重复判和）：只在表库最优档选步（必胜最快/必败拖延/和棋），
+  同档内优先选不会回到已出现局面的走法（防来回走），剩余等价走法随机挑一个。
 - 交互节奏：玩家走子后服务端**不立即让模型应手**（响应里 model_to_move=true），
   网页端等待 1 秒后再调 advance，模型才走子（符合“玩家行棋后隔一秒再由模型走棋”）。
 - 每步响应包含：
@@ -29,6 +33,7 @@ import copy
 import json
 import mmap
 import os
+import random
 import re
 import sys
 import time
@@ -40,7 +45,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))                              # hard_solve_fast
 sys.path.insert(0, str(ROOT / "wolves_eat_sheep_game"))    # rules
 
-from rules import GameState, WOLF, SHEEP, DRAW  # noqa: E402
+from rules import GameState, WOLF, SHEEP, DRAW, IDLE_LIMIT  # noqa: E402
 import hard_solve_fast as hsf  # noqa: E402
 
 INDEX_PATH = Path(__file__).parent / "index.html"
@@ -55,6 +60,13 @@ def move_label(result: int, dist: int) -> str:
     if result in (hsf.WOLF_WIN, hsf.SHEEP_WIN):
         lab += f"·最快{dist}步"
     return lab
+
+
+def draw_reason(g: GameState) -> str:
+    """和棋原因：达到步数上限 / 相同局面重复出现（官方 5 次判和规则）。"""
+    if g.max_moves is not None and g.move_count >= g.max_moves:
+        return f"双方合计 {g.max_moves} 步"
+    return "相同局面出现 5 次"
 
 
 # ============================================================
@@ -162,14 +174,14 @@ class Tablebase:
 # FEN 解析（悔棋恢复局面用；原 ai_engine.game_from_fen 已随 DQN 一并移除以
 # 去除 torch/ai_engine 依赖，表库引擎不需要神经网络）
 # ============================================================
-def game_from_fen(fen: str, max_moves: int | None = 150) -> GameState:
+def game_from_fen(fen: str, max_moves: int | None = 150, idle_limit: int | None = IDLE_LIMIT) -> GameState:
     parts = fen.split()
     if len(parts) < 2:
         raise ValueError(f"bad fen: {fen!r}")
     rows = parts[0].split("/")
     if len(rows) != 5:
         raise ValueError(f"bad fen rows: {fen!r}")
-    game = GameState(idle_limit=None, max_moves=max_moves)
+    game = GameState(idle_limit=idle_limit, max_moves=max_moves)
     game.board = [[None for _ in range(5)] for _ in range(5)]
     for r, row in enumerate(rows):
         c = 0
@@ -219,6 +231,7 @@ class Session:
         self.tb = tb
         self.player_side = None  # None = 尚未选择执棋方
         self.endless = False     # 无尽模式：勾选后解除 150 步上限，超过仍继续提示/记录
+        self.manual = False      # 手动模式：模型给出最优解，由玩家点选替模型走棋
         self.game = self._new_game()
         self.history = [game_to_fen(self.game)]
         self.log = []            # 对局记录（每步一行，含走完后局面的最优解结论）
@@ -228,10 +241,25 @@ class Session:
         self.model_pending = False  # 玩家刚走完，模型等待 advance 才应手
         self.record_saved = False   # 当前局是否已自动存档（终局/重开只存一次）
         self.last_saved = None      # 最近一次存档文件名
+        self._seen = {self._pos_key(self.game)}  # 本局出现过的局面 key（模型防重复用）
+        self._pick_cache = None     # 同一局面内模型选步缓存（(fen, choice)）
 
     def _new_game(self) -> GameState:
-        """按当前无尽模式开关新建一局（无尽 → 不设步数上限）。"""
-        return GameState(idle_limit=None, max_moves=None if self.endless else 150)
+        """按当前无尽模式开关新建一局（官方规则含 5 次重复判和；无尽 → 不设步数上限）。"""
+        return GameState(idle_limit=IDLE_LIMIT, max_moves=None if self.endless else 150)
+
+    @staticmethod
+    def _pos_key(game: GameState):
+        """局面唯一 key（棋盘 + 轮到谁走），用于模型“不回到已出现的局面”的约束。"""
+        return (tuple(game.board[i // 5][i % 5] for i in range(25)), game.turn)
+
+    def _rebuild_seen(self) -> None:
+        """悔棋后按 history（每步一个 FEN）重建已出现局面集合。"""
+        self._seen = {
+            self._pos_key(game_from_fen(f, max_moves=self.game.max_moves,
+                                        idle_limit=self.game.idle_limit))
+            for f in self.history
+        }
 
     # ---------- 自动存档 ----------
     def save_record(self) -> str | None:
@@ -252,7 +280,7 @@ class Session:
             reason = "三只狼均无法移动"
         elif g.winner == DRAW:
             result = "和棋"
-            reason = "双方合计 150 步"
+            reason = draw_reason(g)
         else:
             result = "未完成"
             reason = "手动重开"
@@ -263,6 +291,7 @@ class Session:
             "player_side": ("wolf" if self.player_side == WOLF else
                             "sheep" if self.player_side == SHEEP else None),
             "endless": self.endless,
+            "manual": self.manual,
             "result": result,
             "reason": reason,
             "move_count": g.move_count,
@@ -287,13 +316,76 @@ class Session:
         # 纯表库引擎：开局羊数 15 ≤ 已解出最大 k（现为 15），整局都被覆盖
         return "tb"
 
+    def _model_choice(self) -> dict | None:
+        """在表库最优解里做“规则性 + 随机性”选步。
+
+        规则性（防 5 次重复判和）：
+          - 只考虑当前回合方最优的一档（必胜取最快、必败取拖延最久、和棋取和）；
+          - 同档走法中，优先选不会回到本局已出现过局面的走法；
+            （回合制循环/来回走必然复现旧局面 → 被挡掉，避免模型把能赢的棋走和）
+          - 再优先选不会让所动棋子“来回摆动”的走法（直接避开官方“同子反复 5 次
+            判和”的判定路径；来回摆动的棋子 back-and-forth 计数 > 0）。
+        随机性：
+          - 在满足上述规则的等价最优走法里均匀随机挑一个，避免永远走同一招。
+        """
+        g = self.game
+        my_win = hsf.WOLF_WIN if g.turn == WOLF else hsf.SHEEP_WIN
+        cands = []
+        for r in range(5):
+            for c in range(5):
+                if g.board[r][c] != g.turn:
+                    continue
+                for mv in g.legal_moves_from((r, c)):
+                    trial = copy.deepcopy(g)
+                    if not trial.move((r, c), mv.destination):
+                        continue
+                    known, result, dist = self.tb.lookup(trial)
+                    if not known:
+                        continue
+                    moved_id = trial.piece_ids.get(mv.destination)
+                    osc = (trial._back_and_forth_count(trial.piece_histories[moved_id])
+                           if moved_id in trial.piece_histories else 0)
+                    cands.append({
+                        "from": (r, c),
+                        "to": mv.destination,
+                        "rank": 2 if result == my_win else (1 if result == hsf.DRAW else 0),
+                        "dist": dist,
+                        "osc": osc,
+                        "key": self._pos_key(trial),
+                    })
+        if not cands:
+            return None
+        cands.sort(key=lambda m: (m["rank"], -m["dist"]), reverse=True)
+        best_rank = cands[0]["rank"]
+        if best_rank == 2:
+            best_dist = cands[0]["dist"]
+            pool = [m for m in cands if m["rank"] == 2 and m["dist"] == best_dist]
+        elif best_rank == 1:
+            pool = [m for m in cands if m["rank"] == 1]
+        else:
+            best_dist = max(m["dist"] for m in cands)
+            pool = [m for m in cands if m["dist"] == best_dist]
+        fresh = [m for m in pool if m["key"] not in self._seen]
+        sel = fresh if fresh else pool
+        min_osc = min(m["osc"] for m in sel)
+        sel = [m for m in sel if m["osc"] == min_osc]
+        chosen = random.choice(sel)
+        return chosen
+
     def choose_model(self):
-        """为当前回合方选一步；返回 (start, dest, note) 或 None。"""
-        choice = self.tb.best_move(self.game)
+        """为当前回合方选一步；返回 (start, dest, note) 或 None。
+
+        同一局面缓存结果：前端“模型将走”提示与实际执行的一步必须一致。
+        """
+        fen = game_to_fen(self.game)
+        if self._pick_cache is not None and self._pick_cache[0] == fen:
+            choice = self._pick_cache[1]
+        else:
+            choice = self._model_choice()
+            self._pick_cache = (fen, choice)
         if choice is None:
             return None, None, f"硬解表库 k={self.game.sheep_count} 未求解"
-        (r1, c1), mv = choice
-        return (r1, c1), mv.destination, f"硬解表库 k={self.game.sheep_count} 最优解"
+        return choice["from"], choice["to"], f"硬解表库 k={self.game.sheep_count} 最优解"
 
     # ---------- 走子 ----------
     def _push_log(self, side, r1, c1, r2, c2, captured_idx):
@@ -326,11 +418,15 @@ class Session:
         self.model_note = note
         self._push_log(side, r1, c1, r2, c2, captured)
         self.history.append(game_to_fen(self.game))
+        self._seen.add(self._pos_key(self.game))
+        self._pick_cache = None
         self.model_pending = False
         return True
 
     def advance(self):
-        """网页端隔 1 秒后调用：让模型完成应手。"""
+        """网页端隔 1 秒后调用：让模型完成应手（手动模式下不做自动应手）。"""
+        if self.manual:
+            return
         if (self.model_pending and self.game.winner is None
                 and self.game.turn != self.player_side):
             self.model_pending = False
@@ -351,6 +447,8 @@ class Session:
         self.model_pending = True  # 若你执羊，模型(狼)先行，1 秒后由 advance 走第一步
         self.record_saved = False
         self.last_saved = None
+        self._seen = {self._pos_key(self.game)}
+        self._pick_cache = None
 
     def move(self, fr, to):
         if self.game.winner is not None:
@@ -369,6 +467,7 @@ class Session:
         self.model_note = ""
         self._push_log(side, fr_c[0], fr_c[1], to_c[0], to_c[1], captured)
         self.history.append(game_to_fen(self.game))   # 与 step_model 对齐：每走一步记一条
+        self._seen.add(self._pos_key(self.game))
         self.model_pending = True
         return True, None
 
@@ -377,10 +476,13 @@ class Session:
             return False, "没有可悔的棋"
         self.history.pop()
         max_moves = self.game.max_moves
-        self.game = game_from_fen(self.history[-1], max_moves=max_moves)
+        idle_limit = self.game.idle_limit
+        self.game = game_from_fen(self.history[-1], max_moves=max_moves, idle_limit=idle_limit)
         # 对局记录按“步数序”截断：每步恰好一条日志、一条 history FEN，严格对齐，
         # 不再按 FEN 集合匹配（同局面复现/玩家行棋不入 history 会导致误删整段记录）。
         self.log = self.log[:len(self.history) - 1]
+        self._rebuild_seen()
+        self._pick_cache = None
         self.model_move = None
         self.model_capture = None
         self.model_note = ""
@@ -391,6 +493,7 @@ class Session:
         if self.player_side is None:
             return False, "请先选择执棋方"
         self.player_side = SHEEP if self.player_side == WOLF else WOLF
+        self._pick_cache = None
         self.model_move = None
         self.model_capture = None
         self.model_note = ""
@@ -409,6 +512,37 @@ class Session:
             self.game.winner = DRAW
         return True, None
 
+    def set_manual(self, on: bool):
+        """开/关手动模式：开 → 模型不再自动应手，由玩家点选右侧推荐走法替模型走棋。"""
+        self.manual = bool(on)
+        self._pick_cache = None
+        return True, None
+
+    def model_move_cmd(self, fr, to):
+        """手动模式：玩家从模型推荐走法中选一步 (fr,to)，替模型执行。"""
+        if not self.manual:
+            return False, "当前是自动模式，模型会自动走棋"
+        if self.game.winner is not None:
+            return False, "对局已结束"
+        if self.game.turn == self.player_side:
+            return False, "现在轮到你走棋"
+        fr_c = (fr // 5, fr % 5)
+        to_c = (to // 5, to % 5)
+        side = "wolf" if self.game.turn == WOLF else "sheep"
+        sheep_before = self.game.sheep_count
+        if not self.game.move(fr_c, to_c):
+            return False, "非法走法"
+        captured = (to_c[0] * 5 + to_c[1]) if self.game.sheep_count < sheep_before else None
+        self.model_move = (fr_c, to_c)
+        self.model_capture = captured
+        self.model_note = "手动模式·点选代走"
+        self._push_log(side, fr_c[0], fr_c[1], to_c[0], to_c[1], captured)
+        self.history.append(game_to_fen(self.game))
+        self._seen.add(self._pos_key(self.game))
+        self._pick_cache = None
+        self.model_pending = False
+        return True, None
+
     def restart(self):
         # 手动重开前把未存档的当前局自动保存（终局局已在 snapshot 里存过则跳过）
         if not self.record_saved:
@@ -421,6 +555,8 @@ class Session:
         self.model_note = ""
         self.model_pending = True
         self.record_saved = False
+        self._seen = {self._pos_key(self.game)}
+        self._pick_cache = None
         return True, None
 
     # ---------- 分析 ----------
@@ -469,9 +605,9 @@ class Session:
         legal = self.legal_list()
         if not legal:
             return None
-        # 轮到模型走：预先算出它将执行的一步（与真实走子完全同源）
+        # 轮到模型走：预先算出它将执行的一步（与真实走子完全同源；手动模式不标注）
         exec_from = exec_to = None
-        if self.player_side is not None and g.turn != self.player_side:
+        if (self.player_side is not None and g.turn != self.player_side and not self.manual):
             picked = self.choose_model()
             if picked is not None and len(picked) >= 3 and picked[0] is not None:
                 exec_from = picked[0][0] * 5 + picked[0][1]
@@ -519,13 +655,14 @@ class Session:
         elif g.winner == SHEEP:
             terminal = {"result": "羊胜", "reason": "三只狼均无法移动"}
         elif g.winner == DRAW:
-            terminal = {"result": "和棋", "reason": "双方合计 150 步"}
+            terminal = {"result": "和棋", "reason": draw_reason(g)}
         return {
             "board": board,
             "turn": "wolf" if g.turn == WOLF else "sheep",
             "player_side": ("wolf" if self.player_side == WOLF else
                             "sheep" if self.player_side == SHEEP else None),
             "endless": self.endless,
+            "manual": self.manual,
             "record_saved": self.record_saved,
             "last_saved": self.last_saved,
             "saved_count": self.saved_count(),
@@ -613,6 +750,16 @@ class Handler(BaseHTTPRequestHandler):
                 session.restart()
             elif cmd == "endless":
                 ok, err = session.set_endless(bool(data.get("on", False)))
+                if not ok:
+                    self._send(200, json.dumps({"ok": False, "error": err}).encode())
+                    return
+            elif cmd == "mode":
+                ok, err = session.set_manual(bool(data.get("manual", False)))
+                if not ok:
+                    self._send(200, json.dumps({"ok": False, "error": err}).encode())
+                    return
+            elif cmd == "model_move":
+                ok, err = session.model_move_cmd(data.get("from"), data.get("to"))
                 if not ok:
                     self._send(200, json.dumps({"ok": False, "error": err}).encode())
                     return

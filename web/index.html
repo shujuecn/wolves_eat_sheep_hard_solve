@@ -83,6 +83,7 @@
     background:#6b4a2a;color:#ffe9c4;box-shadow:0 3px 8px rgba(0,0,0,.4)}
   #ctl button:hover{filter:brightness(1.15)}
   #ctl button:disabled{filter:grayscale(.7);cursor:not-allowed}
+  #btn-mode.on{background:#3a5f9e;color:#fff;box-shadow:0 0 0 2px #9ecbff66}
   #endless-box{display:flex;align-items:center;gap:6px;padding:7px 14px;font-size:16px;font-weight:800;
     background:#33503a;color:#cfe8c8;border-radius:8px;cursor:pointer;user-select:none;white-space:nowrap;
     box-shadow:0 3px 8px rgba(0,0,0,.4)}
@@ -103,6 +104,9 @@
   .an-row.fav{background:rgba(70,180,100,.16)}
   .an-row.bad{background:rgba(220,80,80,.13)}
   .an-row.exec{outline:2px solid var(--gold);outline-offset:-2px}
+  .an-row.pick-row{cursor:pointer}
+  .an-row.pick-row:hover{background:rgba(124,224,124,.22);transform:scale(1.01)}
+  .an-row.rec{outline:2px solid var(--green);outline-offset:-2px}
   .an-row .rn{font-weight:900;color:var(--gold);width:26px;flex:0 0 auto}
   .an-row .mv{font-weight:800;letter-spacing:1px}
   .an-row .cap{color:#ff9d9d}
@@ -147,6 +151,7 @@
       <button id="btn-undo">悔棋 (u)</button>
       <button id="btn-switch">换边 (s)</button>
       <button id="btn-restart">重开 (r)</button>
+      <button id="btn-mode" title="自动：模型自动应手；手动：模型给出最优解，由你点右侧推荐走法替模型走棋">自动模式</button>
       <label id="endless-box" title="勾选后解除 150 步上限，超过仍继续对局并保留最优解提示与对局记录">
         <input type="checkbox" id="chk-endless"> 无尽模式
       </label>
@@ -247,7 +252,7 @@ function applyState(s, clearLine) {
   syncBoard();
   renderRight();
   if (advTimer) { clearTimeout(advTimer); advTimer = null; }
-  if (!s.terminal && s.model_to_move && !s.model_move) {
+  if (!s.terminal && s.model_to_move && !s.model_move && !s.manual) {
     advTimer = setTimeout(async () => {
       const s2 = await api("advance");
       if (s2) applyState(s2, false);
@@ -271,33 +276,41 @@ function renderRight() {
                 (g.terminal.result.startsWith("羊") && g.player_side === "sheep");
     meta = `${mvTxt} · 终局 · <span class="${won ? "you" : "ai"}">${g.terminal.result}</span>（${g.terminal.reason}）`;
   } else {
+    const hint = g.manual && g.model_to_move
+      ? " · <span class='think'>手动模式 · 请点选推荐走法</span>"
+      : g.model_to_move ? " · <span class='think'>模型思考中…</span>" : "";
     meta = `${mvTxt} · 羊数 ${g.sheep} · 轮到 ` +
-           `<span class="${mine ? "you" : "ai"}">${turnName}${mine ? "（你）" : "（机）"}</span>` +
-           (g.model_to_move ? " · <span class='think'>模型思考中…</span>" : "");
+           `<span class="${mine ? "you" : "ai"}">${turnName}${mine ? "（你）" : "（机）"}</span>` + hint;
   }
   $("meta").innerHTML = `你执 <span class="you">${you}</span> · ` + meta;
   // 局面分析
   const engine = `表库 k=${g.sheep}`;
   $("an-head").textContent = (g.terminal ? "终局" : "当前局面") +
-    ` · 轮到 ${turnName}${g.player_side ? (mine ? "（你）" : "（机）") : ""} · ${engine}`;
+    ` · 轮到 ${turnName}${g.player_side ? (mine ? "（你）" : "（机）") : ""} · ${engine}` +
+    (g.manual && g.model_to_move ? " · 点选一条推荐走法替模型走棋" : "");
   $("an-verdict").textContent = "最优解：" + (g.verdict ? g.verdict.label : "");
   $("an-verdict").style.color = (g.verdict && g.verdict.label.includes("狼胜")) ? "#ff9d9d"
                               : (g.verdict && g.verdict.label.includes("羊胜")) ? "#9dd7ff" : "#ffe9c4";
   if (g.analysis && g.analysis.length) {
     const modelSide = g.player_side === "wolf" ? "sheep" : "wolf";
+    const pickable = g.manual && g.model_to_move;
     $("an-list").innerHTML = g.analysis.map((a, i) => {
       const lab = a.label || "";
       let fav = null;   // null=和棋, true=对模型有利, false=对模型不利
       if (lab.startsWith("狼胜")) fav = modelSide === "wolf";
       else if (lab.startsWith("羊胜")) fav = modelSide === "sheep";
       const cls = "an-row" + (fav === null ? "" : fav ? " fav" : " bad")
-                + (g.model_to_move && i === 0 ? " exec" : "");
-      const execTag = (g.model_to_move && i === 0)
-        ? `<span class="exec-tag">模型将走</span>` : "";
-      return `<div class="${cls}"><span class="rn">${"①②③④⑤⑥⑦⑧⑨⑩"[i]}</span>` +
+                + (g.model_to_move && a.exec ? " exec" : "")
+                + (pickable ? " pick-row" : "")
+                + (pickable && i === 0 ? " rec" : "");
+      const tag = (g.model_to_move && a.exec)
+        ? `<span class="exec-tag">模型将走</span>`
+        : (pickable && i === 0) ? `<span class="exec-tag">推荐</span>` : "";
+      const click = pickable ? ` data-from="${a.from}" data-to="${a.to}"` : "";
+      return `<div class="${cls}"${click}><span class="rn">${"①②③④⑤⑥⑦⑧⑨⑩"[i]}</span>` +
         `<span class="mv">${name(a.from)}→${name(a.to)}</span>` +
         (a.captured != null ? `<span class="cap">吃${name(a.captured)}</span>` : "") +
-        execTag +
+        tag +
         `<span class="cv">${a.label}</span></div>`;
     }).join("");
   } else {
@@ -319,6 +332,9 @@ function renderRight() {
   $("log-saved").textContent = g.saved_count
     ? `· 已自动保存 ${g.saved_count} 局${g.last_saved ? `（最近 ${g.last_saved}）` : ""}`
     : "";
+  // 自动/手动模式按钮
+  $("btn-mode").textContent = g.manual ? "手动模式" : "自动模式";
+  $("btn-mode").classList.toggle("on", g.manual);
 }
 
 // ---------- 交互 ----------
@@ -349,9 +365,19 @@ boardEl.addEventListener("click", e => {
 function doUndo() { api("undo").then(s => { if (s) applyState(s, false); }); }
 function doSwitch() { api("switch").then(s => { if (s) applyState(s, false); }); }
 function doRestart() { api("restart").then(s => { if (s) applyState(s, false); }); }
+function doMode() { api("mode", { manual: !state.manual }).then(s => { if (s) applyState(s, false); }); }
 $("btn-undo").onclick = doUndo;
 $("btn-switch").onclick = doSwitch;
 $("btn-restart").onclick = doRestart;
+$("btn-mode").onclick = doMode;
+// 手动模式：点右侧推荐走法替模型走棋
+$("an-list").addEventListener("click", e => {
+  const row = e.target.closest(".pick-row");
+  if (!row || busy || !state || !state.manual || !state.model_to_move) return;
+  api("model_move", { from: +row.dataset.from, to: +row.dataset.to }).then(s => {
+    if (s) applyState(s, false);
+  });
+});
 $("chk-endless").addEventListener("change", ev => {
   api("endless", { on: ev.target.checked }).then(s => {
     if (s) applyState(s, false);
