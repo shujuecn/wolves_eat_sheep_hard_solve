@@ -60,7 +60,8 @@ static_assert(sizeof(TBHeader) == 64, "TBHeader must be 64 bytes");
 
 class Tablebase {
 public:
-    Tablebase() : k_(-1), data_(nullptr), size_(0), fd_(-1) {}
+    Tablebase() : k_(-1), data_(nullptr), size_(0), fd_(-1),
+                  file_backed_(false) {}
     ~Tablebase();
 
     // 不可复制
@@ -112,6 +113,7 @@ private:
     uint64_t size_;
     int fd_;
     std::string path_;
+    bool file_backed_;  // true = 数据映射自输出文件（已完成桶）；false = 匿名工作区
 };
 
 // ============================================================

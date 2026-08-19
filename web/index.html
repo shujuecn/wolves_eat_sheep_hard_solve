@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>狼羊棋 · 人机对战</title>
+<style>
+  *{box-sizing:border-box}
+  :root{
+    --gold:#f2c14e; --blue:#4a90ff; --green:#7ce07c; --red:#c22b2b;
+    --line:rgba(35,18,6,.5);
+    --dark-sq:rgba(25,12,4,.30); --light-sq:rgba(255,248,230,.07);
+  }
+  html,body{height:100%;margin:0}
+  body{
+    background:linear-gradient(160deg,#2b1d12,#4a3120); color:#f0e6d8;
+    font-family:"PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+    overflow:hidden;
+  }
+  #app{height:100%;display:flex;gap:16px;padding:12px 16px}
+
+  /* ============ 左侧：棋盘（占屏宽 ≥50%） ============ */
+  #left{display:flex;flex-direction:column;align-items:center;gap:8px;flex:0 0 auto;min-height:0}
+  #headbar{display:flex;align-items:center;gap:14px;justify-content:center;flex-wrap:nowrap}
+  #meta{
+    font-size:17px;font-weight:800;line-height:1.5;text-align:center;
+    padding:3px 14px;border-radius:8px;background:rgba(0,0,0,.35);white-space:nowrap;
+  }
+  #meta .you{color:var(--gold)} #meta .ai{color:var(--blue)} #meta .think{color:var(--green)}
+  #boardwrap{position:relative}
+  #board{
+    display:grid; grid-template-columns:30px repeat(5,1fr); grid-template-rows:30px repeat(5,1fr);
+    width:min(52vw,90vh);height:min(52vw,90vh);
+    background:linear-gradient(150deg,#8a6a42,#6a4c2c);
+    border:6px solid #4a3520;border-radius:12px;padding:8px;
+    box-shadow:0 10px 30px rgba(0,0,0,.5);
+  }
+  #board.flip{transform:rotate(180deg)}
+  #board.flip .col-label,#board.flip .row-label{transform:rotate(180deg)}
+  #board.flip .p,#board.flip .cell.model-from::after{transform:rotate(180deg)}
+  .col-label,.row-label{
+    display:flex;align-items:center;justify-content:center;
+    color:#ffe9c4;font-size:20px;font-weight:900;text-shadow:0 1px 2px #000;
+  }
+  .cell{
+    position:relative;display:flex;align-items:center;justify-content:center;
+    box-shadow:inset 0 0 0 1.5px var(--line);cursor:default;
+  }
+  .cell.dark{background:var(--dark-sq)}
+  .cell.light{background:var(--light-sq)}
+  .cell .dot{width:14px;height:14px;border-radius:50%;background:radial-gradient(circle at 35% 35%,rgba(0,0,0,0),rgba(0,0,0,.35))}
+  .p{
+    width:74%;height:74%;border-radius:50%;pointer-events:none;
+    display:flex;align-items:center;justify-content:center;
+    font-family:"KaiTi","STKaiti","楷体",serif;font-weight:900;
+    font-size:clamp(24px,5.4vh,58px);line-height:1;
+    box-shadow:0 3px 6px rgba(0,0,0,.45),inset 0 0 0 2px rgba(0,0,0,.14);
+    transition:transform .08s;
+  }
+  .p.wolf{background:radial-gradient(circle at 35% 30%,#fdf3e3,#e7cfa9);color:var(--red)}
+  .p.sheep{background:radial-gradient(circle at 35% 30%,#fff,#e5e5da);color:#1d1d1d}
+  .cell.pickable{cursor:pointer}
+  .cell.pickable:hover .p{transform:scale(1.07)}
+  .cell.selected .p{box-shadow:0 0 0 4px var(--gold),0 3px 6px rgba(0,0,0,.45),inset 0 0 0 2px rgba(0,0,0,.14)}
+  .cell.target{cursor:pointer}
+  .cell.target .p{box-shadow:0 0 0 3px var(--green),0 0 14px 2px rgba(124,224,124,.5)}
+  .cell.target.empty::after{content:"";position:absolute;width:28%;height:28%;border-radius:50%;background:rgba(124,224,124,.85);box-shadow:0 0 10px var(--green)}
+  .cell.model-to .p{box-shadow:0 0 0 4px var(--blue),0 0 16px 2px rgba(74,144,255,.6)}
+  .cell.model-from::after{content:"×";position:absolute;font-size:clamp(24px,4.6vh,46px);font-weight:900;color:#ff7777;text-shadow:0 0 6px #000;line-height:1}
+  #sidecard{
+    position:absolute;inset:0;border-radius:12px;background:rgba(18,10,4,.6);
+    display:none;flex-direction:column;align-items:center;justify-content:center;gap:20px;z-index:3;
+  }
+  #sidecard .t{font-size:22px;font-weight:800;letter-spacing:3px}
+  .pick-row{display:flex;gap:20px}
+  .pick-btn{padding:18px 40px;font-size:26px;font-weight:900;border:none;border-radius:14px;cursor:pointer;
+    font-family:"KaiTi","STKaiti","楷体",serif;box-shadow:0 6px 16px rgba(0,0,0,.5)}
+  .pick-btn.wolf{background:radial-gradient(circle at 35% 30%,#fdf3e3,#e7cfa9);color:var(--red)}
+  .pick-btn.sheep{background:radial-gradient(circle at 35% 30%,#fff,#e5e5da);color:#1d1d1d}
+  .pick-btn:hover{transform:scale(1.06)}
+  #ctl{display:flex;gap:12px}
+  #ctl button{padding:8px 20px;font-size:16px;font-weight:800;border:none;border-radius:8px;cursor:pointer;font-family:inherit;
+    background:#6b4a2a;color:#ffe9c4;box-shadow:0 3px 8px rgba(0,0,0,.4)}
+  #ctl button:hover{filter:brightness(1.15)}
+  #ctl button:disabled{filter:grayscale(.7);cursor:not-allowed}
+  #error{position:absolute;left:12%;right:12%;bottom:10px;text-align:center;color:#ffd9d9;font-size:17px;font-weight:800;
+    background:rgba(130,25,25,.9);border-radius:8px;padding:4px 10px;min-height:20px;pointer-events:none;z-index:4}
+  #error:empty{display:none}
+
+  /* ============ 右侧：对局信息 ============ */
+  #right{flex:1;min-width:320px;display:flex;flex-direction:column;gap:12px;min-height:0}
+  #analysis{background:rgba(0,0,0,.35);border-radius:10px;padding:12px 14px}
+  #an-head{font-size:19px;font-weight:900;margin-bottom:4px}
+  #an-verdict{font-size:26px;font-weight:900;margin-bottom:10px}
+  #an-list{display:flex;flex-direction:column;gap:4px}
+  .an-row{display:flex;align-items:center;gap:12px;padding:6px 12px;border-radius:8px;background:rgba(255,255,255,.06);font-size:19px}
+  .an-row.fav{background:rgba(70,180,100,.16)}
+  .an-row.bad{background:rgba(220,80,80,.13)}
+  .an-row.exec{outline:2px solid var(--gold);outline-offset:-2px}
+  .an-row .rn{font-weight:900;color:var(--gold);width:26px;flex:0 0 auto}
+  .an-row .mv{font-weight:800;letter-spacing:1px}
+  .an-row .cap{color:#ff9d9d}
+  .an-row .cv{color:#9ecbff;margin-left:auto;white-space:nowrap}
+  .an-row .exec-tag{color:#1c1006;background:var(--gold);font-size:14px;font-weight:900;padding:1px 8px;border-radius:10px}
+  #log{flex:1;min-height:0;background:rgba(0,0,0,.35);border-radius:10px;padding:12px 14px;display:flex;flex-direction:column}
+  #log-head{font-size:19px;font-weight:900;margin-bottom:6px}
+  #log-list{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:2px}
+  .lg-row{display:flex;align-items:center;gap:10px;padding:5px 10px;border-radius:6px;font-size:18px;white-space:nowrap}
+  .lg-row:nth-child(odd){background:rgba(255,255,255,.05)}
+  .lg-row .n{color:#c9b393;width:36px;flex:0 0 auto}
+  .lg-row .sd{font-weight:900;width:36px;flex:0 0 auto}
+  .lg-row .sd.wolf{color:#ff8b8b}
+  .lg-row .sd.sheep{color:#bcd8ff}
+  .lg-row .mv{font-weight:800}
+  .lg-row .cap{color:#ff9d9d}
+  .lg-row .by{margin-left:auto;font-size:16px;font-weight:900}
+  .lg-row .by.you{color:var(--gold)}
+  .lg-row .by.ai{color:var(--blue)}
+  .lg-row .chip{font-size:16px;font-weight:800;color:#ffe9c4;background:rgba(0,0,0,.4);padding:1px 10px;border-radius:10px;flex:0 0 auto}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="left">
+    <div id="headbar">
+      <div id="meta"></div>
+    </div>
+    <div id="boardwrap">
+      <div id="board"></div>
+      <div id="sidecard">
+        <div class="t">选择执棋方 · 狼方先行</div>
+        <div class="pick-row">
+          <button class="pick-btn wolf" onclick='chooseSide("wolf")'>狼</button>
+          <button class="pick-btn sheep" onclick='chooseSide("sheep")'>羊</button>
+        </div>
+      </div>
+      <div id="error"></div>
+    </div>
+    <div id="ctl">
+      <button id="btn-undo">悔棋 (u)</button>
+      <button id="btn-switch">换边 (s)</button>
+      <button id="btn-restart">重开 (r)</button>
+    </div>
+  </div>
+  <div id="right">
+    <div id="analysis">
+      <div id="an-head"></div>
+      <div id="an-verdict"></div>
+      <div id="an-list"></div>
+    </div>
+    <div id="log">
+      <div id="log-head">对局记录</div>
+      <div id="log-list"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+const LOG = "ABCDE";
+let state = null, selected = -1, targets = [], lastModelMove = null, busy = false, advTimer = null;
+
+const $ = id => document.getElementById(id);
+const boardEl = $("board");
+const logList = $("log-list");
+const name = i => LOG[i % 5] + (Math.floor(i / 5) + 1);   // 逻辑坐标记法 a1..e5
+
+// ---------- 棋盘骨架：只建一次，之后原地增量更新 ----------
+const cells = [];
+function buildBoard() {
+  let h = '<div class="col-label"></div>';
+  for (let c = 0; c < 5; c++) h += `<div class="col-label">${LOG[c]}</div>`;
+  for (let r = 0; r < 5; r++) {
+    h += `<div class="row-label">${r + 1}</div>`;
+    for (let c = 0; c < 5; c++) {
+      const i = r * 5 + c;
+      h += `<div id="c-${i}" class="cell light" data-log="${i}"><span class="dot"></span></div>`;
+    }
+  }
+  boardEl.innerHTML = h;
+  for (let i = 0; i < 25; i++) cells[i] = $("c-" + i);
+}
+// 原地同步：只在内容/样式变化时修改对应格子
+function syncBoard() {
+  if (!state) return;
+  const flip = state.player_side === "wolf";
+  boardEl.classList.toggle("flip", flip);
+  const myTurn = state.turn === state.player_side && !state.terminal;
+  for (let i = 0; i < 25; i++) {
+    const el = cells[i], piece = state.board[i];
+    const inner = piece ? `<span class="p ${piece}">${piece === "wolf" ? "狼" : "羊"}</span>`
+                        : '<span class="dot"></span>';
+    if (el.innerHTML !== inner) el.innerHTML = inner;
+    const cls = ["cell", ((Math.floor(i / 5) + i % 5) % 2 ? "light" : "dark")];
+    if (lastModelMove && i === lastModelMove.from) cls.push("model-from");
+    if (lastModelMove && i === lastModelMove.to) cls.push("model-to");
+    if (i === selected) cls.push("selected");
+    if (targets.includes(i)) cls.push("target");
+    const mine = piece && (piece === "wolf") === (state.player_side === "wolf");
+    if (myTurn && mine && state.legal.some(m => m.from === i)) cls.push("pickable");
+    const cs = cls.join(" ");
+    if (el.className !== cs) el.className = cs;
+  }
+}
+
+// ---------- API ----------
+async function api(cmd, extra) {
+  busy = true;
+  try {
+    const res = await fetch("/api", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(Object.assign({ cmd }, extra || {})),
+    });
+    const data = await res.json();
+    if (!data.ok) {
+      showError(data.error || "请求失败");
+      const s = await fetch("/api", { method: "POST", headers: { "Content-Type": "application/json" },
+                                      body: '{"cmd":"state"}' }).then(r => r.json());
+      if (s.ok) applyState(s.state, false);
+      return null;
+    }
+    return data.state;
+  } catch (e) { showError(String(e)); return null; }
+  finally { busy = false; }
+}
+function showError(msg) {
+  $("error").textContent = "⚠ " + msg;
+  setTimeout(() => { if ($("error").textContent.startsWith("⚠ ")) $("error").textContent = ""; }, 3000);
+}
+
+// ---------- 状态应用 ----------
+function applyState(s, clearLine) {
+  state = s;
+  selected = -1; targets = [];
+  lastModelMove = s.model_move ? { from: s.model_move.from, to: s.model_move.to } : null;
+  syncBoard();
+  renderRight();
+  if (advTimer) { clearTimeout(advTimer); advTimer = null; }
+  if (!s.terminal && s.model_to_move && !s.model_move) {
+    advTimer = setTimeout(async () => {
+      const s2 = await api("advance");
+      if (s2) applyState(s2, false);
+    }, 500);
+  }
+}
+
+function renderRight() {
+  const g = state;
+  if (!g) return;
+  // 侧选卡
+  $("sidecard").style.display = g.player_side ? "none" : "flex";
+  // 顶部状态
+  const you = g.player_side === "wolf" ? "狼" : "羊";
+  const turnName = g.turn === "wolf" ? "狼" : "羊";
+  const mine = g.turn === g.player_side;
+  let meta = "";
+  if (g.terminal) {
+    const won = (g.terminal.result.startsWith("狼") && g.player_side === "wolf") ||
+                (g.terminal.result.startsWith("羊") && g.player_side === "sheep");
+    meta = `第 ${g.move_count} / 150 步 · 终局 · <span class="${won ? "you" : "ai"}">${g.terminal.result}</span>（${g.terminal.reason}）`;
+  } else {
+    meta = `第 ${g.move_count} / 150 步 · 羊数 ${g.sheep} · 轮到 ` +
+           `<span class="${mine ? "you" : "ai"}">${turnName}${mine ? "（你）" : "（机）"}</span>` +
+           (g.model_to_move ? " · <span class='think'>模型思考中…</span>" : "");
+  }
+  $("meta").innerHTML = `你执 <span class="you">${you}</span> · ` + meta;
+  // 局面分析
+  const engine = g.phase === "dqn" ? "DQN 引导" : `表库 k=${g.sheep}`;
+  $("an-head").textContent = (g.terminal ? "终局" : "当前局面") +
+    ` · 轮到 ${turnName}${g.player_side ? (mine ? "（你）" : "（机）") : ""} · ${engine}`;
+  $("an-verdict").textContent = "最优解：" + (g.verdict ? g.verdict.label : "");
+  $("an-verdict").style.color = (g.verdict && g.verdict.label.includes("狼胜")) ? "#ff9d9d"
+                              : (g.verdict && g.verdict.label.includes("羊胜")) ? "#9dd7ff" : "#ffe9c4";
+  if (g.analysis && g.analysis.length) {
+    const modelSide = g.player_side === "wolf" ? "sheep" : "wolf";
+    $("an-list").innerHTML = g.analysis.map((a, i) => {
+      const lab = a.label || "";
+      let fav = null;   // null=和棋/DQN 候选, true=对模型有利, false=对模型不利
+      if (lab.startsWith("狼胜")) fav = modelSide === "wolf";
+      else if (lab.startsWith("羊胜")) fav = modelSide === "sheep";
+      const cls = "an-row" + (fav === null ? "" : fav ? " fav" : " bad")
+                + (g.model_to_move && i === 0 ? " exec" : "");
+      const execTag = (g.model_to_move && i === 0)
+        ? `<span class="exec-tag">模型将走</span>` : "";
+      return `<div class="${cls}"><span class="rn">${"①②③④⑤⑥⑦⑧⑨⑩"[i]}</span>` +
+        `<span class="mv">${name(a.from)}→${name(a.to)}</span>` +
+        (a.captured != null ? `<span class="cap">吃${name(a.captured)}</span>` : "") +
+        execTag +
+        `<span class="cv">${a.label}</span></div>`;
+    }).join("");
+  } else {
+    $("an-list").innerHTML = g.terminal ? "" : "<div class='an-row'><span class='mv'>（暂无候选）</span></div>";
+  }
+  // 对局记录
+  logList.innerHTML = (g.log || []).map(e =>
+    `<div class="lg-row"><span class="n">${e.n}.</span>` +
+    `<span class="sd ${e.side}">${e.side === "wolf" ? "狼" : "羊"}</span>` +
+    `<span class="mv">${name(e.from)}→${name(e.to)}</span>` +
+    (e.captured != null ? `<span class="cap">吃${name(e.captured)}</span>` : "") +
+    `<span class="by ${e.me ? "you" : "ai"}">${e.me ? "你" : "机"}</span>` +
+    `<span class="chip">${e.chip}</span></div>`).join("");
+  logList.scrollTop = logList.scrollHeight;
+}
+
+// ---------- 交互 ----------
+function chooseSide(side) { api("choose", { side }).then(s => { if (s) applyState(s, false); }); }
+
+boardEl.addEventListener("click", e => {
+  if (busy || !state || state.terminal) return;
+  const el = e.target.closest(".cell");
+  if (!el) return;
+  const log = +el.dataset.log;
+  if (selected >= 0 && targets.includes(log)) {
+    api("move", { from: selected, to: log }).then(s => {
+      if (s) applyState(s, false);
+      else { selected = -1; targets = []; syncBoard(); }
+    });
+    return;
+  }
+  const piece = state.board[log];
+  const mine = piece && (piece === "wolf") === (state.player_side === "wolf");
+  if (state.turn === state.player_side && mine) {
+    const moves = state.legal.filter(m => m.from === log);
+    selected = moves.length ? log : -1;
+    targets = moves.map(m => m.to);
+  } else { selected = -1; targets = []; }
+  syncBoard();
+});
+
+function doUndo() { api("undo").then(s => { if (s) applyState(s, false); }); }
+function doSwitch() { api("switch").then(s => { if (s) applyState(s, false); }); }
+function doRestart() { api("restart").then(s => { if (s) applyState(s, false); }); }
+$("btn-undo").onclick = doUndo;
+$("btn-switch").onclick = doSwitch;
+$("btn-restart").onclick = doRestart;
+document.addEventListener("keydown", ev => {
+  if (ev.key === "u" || ev.key === "U") doUndo();
+  else if (ev.key === "s" || ev.key === "S") doSwitch();
+  else if (ev.key === "r" || ev.key === "R") doRestart();
+});
+
+// ---------- 启动 ----------
+buildBoard();
+(async function init() {
+  const s = await api("state");
+  if (s) applyState(s, false);
+})();
+</script>
+</body>
+</html>

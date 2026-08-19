@@ -5,9 +5,9 @@ CXX := g++
 CXXFLAGS := -std=c++20 -O3 -march=native -flto -Wall -Wextra
 LDFLAGS := -flto -pthread
 
-# 本地编译环境（从 .deb 包提取的 g++）
+# 本地编译环境（从 .deb 包提取的 g++，已从 /tmp 迁移到持久路径）
 # 使用 -idirafter 确保 libc 头文件在 C++ 头文件之后搜索
-LOCAL_PREFIX := /tmp/gcc-local
+LOCAL_PREFIX := /home/agent074/tools/gcc-local
 CXXFLAGS += -idirafter $(LOCAL_PREFIX)/usr/include
 CXXFLAGS += -idirafter $(LOCAL_PREFIX)/usr/include/x86_64-linux-gnu
 LDFLAGS += -L$(LOCAL_PREFIX)/usr/lib/x86_64-linux-gnu
@@ -44,10 +44,9 @@ SOLVER_RETRO_OBJ := $(BUILD_DIR)/solver_retro.o
 TARGETS := $(BUILD_DIR)/solve_all $(BUILD_DIR)/solve_retro \
            $(BUILD_DIR)/dump_opening_book \
            $(BUILD_DIR)/verify $(BUILD_DIR)/crosscheck $(BUILD_DIR)/selfcheck \
-           $(BUILD_DIR)/check_tb $(BUILD_DIR)/play $(BUILD_DIR)/solve_term \
-           $(BUILD_DIR)/stat_tb
+           $(BUILD_DIR)/check_tb $(BUILD_DIR)/stat_tb
 
-.PHONY: all clean test solve dump-book verify check-tb play solve-term stat-tb help
+.PHONY: all clean test solve solve-retro dump-book verify check-tb stat-tb web help
 
 all: $(TARGETS)
 
@@ -111,15 +110,6 @@ $(BUILD_DIR)/verify: $(TOOLS_DIR)/verify.cpp \
 $(BUILD_DIR)/check_tb: $(TOOLS_DIR)/check_tb.cpp $(BOARD_OBJ) $(ENCODE_OBJ) | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I$(INCLUDE_DIR) $< $(BOARD_OBJ) $(ENCODE_OBJ) $(LDFLAGS) -o $@
 
-$(BUILD_DIR)/play: $(TOOLS_DIR)/play.cpp $(BOARD_OBJ) | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) -I$(INCLUDE_DIR) $< $(BOARD_OBJ) $(LDFLAGS) -o $@
-
-$(BUILD_DIR)/solve_term: $(TOOLS_DIR)/solve_term.cpp \
-		$(BOARD_OBJ) $(ENCODE_OBJ) $(SYMMETRY_OBJ) $(TABLEBASE_OBJ) | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) -I$(INCLUDE_DIR) $< \
-		$(BOARD_OBJ) $(ENCODE_OBJ) $(SYMMETRY_OBJ) $(TABLEBASE_OBJ) \
-		$(LDFLAGS) -o $@
-
 $(BUILD_DIR)/stat_tb: $(TOOLS_DIR)/stat_tb.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I$(INCLUDE_DIR) $< $(LDFLAGS) -o $@
 
@@ -151,17 +141,13 @@ verify: $(BUILD_DIR)/verify | $(DATA_DIR)
 check-tb: $(BUILD_DIR)/check_tb | $(DATA_DIR)
 	$(BUILD_DIR)/check_tb --data-dir $(DATA_DIR) --threads $$(nproc)
 
-# 终端复刻游戏（双人）
-play: $(BUILD_DIR)/play
-	$(BUILD_DIR)/play
-
-# 终端解棋器（基于表库，只读；默认读 data/tb_test）
-solve-term: $(BUILD_DIR)/solve_term
-	$(BUILD_DIR)/solve_term --data-dir data/tb_test
-
 # 表库结果分布统计（只读，自动跳过未完成桶）
 stat-tb: $(BUILD_DIR)/stat_tb
 	$(BUILD_DIR)/stat_tb --data-dir data/tb_test
+
+# 网页版：可视化人机对战（ssh -L 端口转发后本机浏览器玩）
+web:
+	python3 web/server.py
 
 # 清理
 clean:
@@ -172,16 +158,16 @@ help:
 	@echo "Wolves Eat Sheep — Hard Solve"
 	@echo ""
 	@echo "Targets:"
-	@echo "  all        Build all targets (default)"
-	@echo "  test       Run selfcheck and crosscheck"
-	@echo "  solve      Run the hard solve (all buckets)"
-	@echo "  dump-book  Export opening book JSON"
-	@echo "  verify     Verify tablebase consistency"
-	@echo "  check-tb   Independent per-state minimax check of k=4/k=5"
-	@echo "  play       Terminal game (C++ port of the Python GUI)"
-	@echo "  solve-term Terminal tablebase advisor (read-only, data/tb_test)"
-	@echo "  stat-tb    Result distribution over completed buckets (--raw)"
-	@echo "  clean      Remove build artifacts"
+	@echo "  all         Build all targets (default)"
+	@echo "  test        Run selfcheck and crosscheck"
+	@echo "  solve       Run the original iterative solve (data/tb)"
+	@echo "  solve-retro Run the retrograde solve (data/tb)"
+	@echo "  dump-book   Export opening book JSON"
+	@echo "  verify      Verify tablebase consistency"
+	@echo "  check-tb    Independent per-state minimax check of k=4/k=5"
+	@echo "  stat-tb     Result distribution over completed buckets (--raw)"
+	@echo "  web         Web human-vs-AI game (http://127.0.0.1:8080)"
+	@echo "  clean       Remove build artifacts"
 	@echo ""
 	@echo "Examples:"
 	@echo "  make -j8 solve    # Solve with 8 parallel jobs"

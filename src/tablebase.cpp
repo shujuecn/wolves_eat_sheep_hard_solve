@@ -1,5 +1,6 @@
 #include "tablebase.h"
 
+#include <algorithm>
 #include <cstring>
 #include <fcntl.h>
 #include <stdexcept>
@@ -19,11 +20,13 @@ Tablebase::~Tablebase() {
 
 Tablebase::Tablebase(Tablebase&& other) noexcept
     : k_(other.k_), data_(other.data_), size_(other.size_),
-      fd_(other.fd_), path_(std::move(other.path_)) {
+      fd_(other.fd_), path_(std::move(other.path_)),
+      file_backed_(other.file_backed_) {
     other.data_ = nullptr;
     other.fd_ = -1;
     other.k_ = -1;
     other.size_ = 0;
+    other.file_backed_ = false;
 }
 
 Tablebase& Tablebase::operator=(Tablebase&& other) noexcept {
@@ -34,10 +37,12 @@ Tablebase& Tablebase::operator=(Tablebase&& other) noexcept {
         size_ = other.size_;
         fd_ = other.fd_;
         path_ = std::move(other.path_);
+        file_backed_ = other.file_backed_;
         other.data_ = nullptr;
         other.fd_ = -1;
         other.k_ = -1;
         other.size_ = 0;
+        other.file_backed_ = false;
     }
     return *this;
 }
@@ -49,6 +54,7 @@ bool Tablebase::create(const std::string& path, int k) {
     path_ = path;
     size_ = bucket_size(k);
 
+    // 占位文件（稀疏）：求解期间不写盘，仅在完成时一次性顺序落盘
     fd_ = ::open(path.c_str(), O_RDWR | O_CREAT | O_TRUNC, 0644);
     if (fd_ < 0) {
         perror("open");
@@ -58,7 +64,7 @@ bool Tablebase::create(const std::string& path, int k) {
     // 计算文件大小：头 + 数据
     uint64_t file_size = sizeof(TBHeader) + size_;
 
-    // 扩展文件
+    // 扩展文件（稀疏占位，此时不分配数据块）
     if (::ftruncate(fd_, static_cast<off_t>(file_size)) < 0) {
         perror("ftruncate");
         ::close(fd_);
@@ -66,20 +72,22 @@ bool Tablebase::create(const std::string& path, int k) {
         return false;
     }
 
-    // mmap
-    data_ = static_cast<uint8_t*>(::mmap(nullptr, file_size,
-                                          PROT_READ | PROT_WRITE,
-                                          MAP_SHARED, fd_, 0));
-    if (data_ == MAP_FAILED) {
-        perror("mmap");
+    // 工作区用匿名内存：求解全程零磁盘 I/O。此前 MAP_SHARED 会把每次
+    // 状态写入都变成对输出文件的随机写，脏页回写压垮磁盘/RAID5，导致
+    // 全部工作线程被内核写回节流拖进 D 状态（不可中断睡眠）。
+    uint8_t* map = static_cast<uint8_t*>(
+        ::mmap(nullptr, file_size, PROT_READ | PROT_WRITE,
+               MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    if (map == MAP_FAILED) {
+        perror("mmap workspace");
         ::close(fd_);
         fd_ = -1;
         data_ = nullptr;
         return false;
     }
 
-    // 写文件头
-    TBHeader* hdr = reinterpret_cast<TBHeader*>(data_);
+    // 写文件头（内存副本；正式文件头在 mark_completed 时随数据一并落盘）
+    TBHeader* hdr = reinterpret_cast<TBHeader*>(map);
     std::memset(hdr, 0, sizeof(TBHeader));
     hdr->magic[0] = 'W'; hdr->magic[1] = 'S';
     hdr->magic[2] = 'T'; hdr->magic[3] = 'B';
@@ -92,7 +100,8 @@ bool Tablebase::create(const std::string& path, int k) {
     hdr->completed = 0;
 
     // 数据指针指向头之后
-    data_ = data_ + sizeof(TBHeader);
+    data_ = map + sizeof(TBHeader);
+    file_backed_ = false;
 
     return true;
 }
@@ -135,12 +144,26 @@ bool Tablebase::open(const std::string& path) {
         ::munmap(map, st.st_size);
         ::close(fd_);
         fd_ = -1;
+        data_ = nullptr;
+        path_.clear();
+        return false;
+    }
+
+    // 半成品（completed == 0，如上次求解被中断）拒绝打开，
+    // 让上层走 create() 重建匿名工作区重新求解。
+    if (!hdr->completed) {
+        ::munmap(map, st.st_size);
+        ::close(fd_);
+        fd_ = -1;
+        data_ = nullptr;
+        path_.clear();
         return false;
     }
 
     k_ = hdr->k;
     size_ = hdr->total_entries;
     data_ = map + sizeof(TBHeader);
+    file_backed_ = true;
 
     return true;
 }
@@ -149,7 +172,11 @@ void Tablebase::close() {
     if (data_) {
         uint64_t file_size = sizeof(TBHeader) + size_;
         uint8_t* map_start = data_ - sizeof(TBHeader);
-        ::msync(map_start, file_size, MS_SYNC);
+        if (file_backed_) {
+            // 文件映射：刷回磁盘
+            ::msync(map_start, file_size, MS_SYNC);
+        }
+        // 匿名工作区无需 msync，直接释放（数据已在完成时落盘）
         ::munmap(map_start, file_size);
         data_ = nullptr;
     }
@@ -159,6 +186,7 @@ void Tablebase::close() {
     }
     k_ = -1;
     size_ = 0;
+    file_backed_ = false;
 }
 
 uint8_t Tablebase::get(uint64_t idx) const {
@@ -190,13 +218,46 @@ void Tablebase::fill_unknown() {
 }
 
 void Tablebase::mark_completed() {
-    if (data_) {
-        TBHeader* hdr = reinterpret_cast<TBHeader*>(data_ - sizeof(TBHeader));
-        hdr->completed = 1;
-        uint64_t file_size = sizeof(TBHeader) + size_;
-        uint8_t* map_start = data_ - sizeof(TBHeader);
-        ::msync(map_start, file_size, MS_SYNC);
+    if (!data_) return;
+
+    // 内存中的文件头标记完成
+    TBHeader* hdr = reinterpret_cast<TBHeader*>(data_ - sizeof(TBHeader));
+    hdr->completed = 1;
+
+    // 一次性顺序写盘（对 RAID5/机械盘友好）：[头][数据] 从头开始顺序写。
+    // 求解期间数据一直在内存（匿名工作区），这里才产生唯一的磁盘写入。
+    int fd;
+    if (fd_ >= 0) {
+        fd = fd_;  // create() 时打开的 O_RDWR 占位文件
+    } else {
+        fd = ::open(path_.c_str(), O_WRONLY);
+        if (fd < 0) {
+            perror("mark_completed open");
+            return;
+        }
     }
+
+    if (::lseek(fd, 0, SEEK_SET) < 0) {
+        perror("mark_completed lseek");
+        if (fd != fd_) ::close(fd);
+        return;
+    }
+
+    uint8_t* p = reinterpret_cast<uint8_t*>(hdr);
+    uint64_t remain = sizeof(TBHeader) + size_;
+    while (remain > 0) {
+        size_t chunk =
+            static_cast<size_t>(std::min<uint64_t>(remain, 1u << 20));  // 1MB
+        ssize_t n = ::write(fd, p, chunk);
+        if (n <= 0) {
+            perror("mark_completed write");
+            break;
+        }
+        p += n;
+        remain -= static_cast<uint64_t>(n);
+    }
+    ::fsync(fd);
+    if (fd != fd_) ::close(fd);
 }
 
 // ============================================================
