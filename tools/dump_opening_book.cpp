@@ -140,7 +140,7 @@ void dump_json(const std::string& output_path, TablebaseManager& tb_manager) {
 }
 
 int main(int argc, char** argv) {
-    std::string data_dir = "./data/tb";
+    std::string data_dir = kDefaultDataDir;
     std::string output = "opening_book.json";
 
     for (int i = 1; i < argc; ++i) {

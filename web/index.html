@@ -266,7 +266,7 @@ function renderRight() {
   }
   $("meta").innerHTML = `你执 <span class="you">${you}</span> · ` + meta;
   // 局面分析
-  const engine = g.phase === "dqn" ? "DQN 引导" : `表库 k=${g.sheep}`;
+  const engine = `表库 k=${g.sheep}`;
   $("an-head").textContent = (g.terminal ? "终局" : "当前局面") +
     ` · 轮到 ${turnName}${g.player_side ? (mine ? "（你）" : "（机）") : ""} · ${engine}`;
   $("an-verdict").textContent = "最优解：" + (g.verdict ? g.verdict.label : "");
@@ -276,7 +276,7 @@ function renderRight() {
     const modelSide = g.player_side === "wolf" ? "sheep" : "wolf";
     $("an-list").innerHTML = g.analysis.map((a, i) => {
       const lab = a.label || "";
-      let fav = null;   // null=和棋/DQN 候选, true=对模型有利, false=对模型不利
+      let fav = null;   // null=和棋, true=对模型有利, false=对模型不利
       if (lab.startsWith("狼胜")) fav = modelSide === "wolf";
       else if (lab.startsWith("羊胜")) fav = modelSide === "sheep";
       const cls = "an-row" + (fav === null ? "" : fav ? " fav" : " bad")

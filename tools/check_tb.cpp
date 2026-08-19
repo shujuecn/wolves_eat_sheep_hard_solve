@@ -14,20 +14,17 @@
 
 #include "board.h"
 #include "encode.h"
+#include "platform.h"
 #include "tablebase.h"
 
 #include <algorithm>
 #include <atomic>
 #include <bit>
 #include <cstring>
-#include <fcntl.h>
 #include <iostream>
 #include <mutex>
 #include <string>
-#include <sys/mman.h>
-#include <sys/stat.h>
 #include <thread>
-#include <unistd.h>
 #include <vector>
 
 using namespace wolves;
@@ -35,43 +32,26 @@ using namespace wolves;
 // 距离字段为 6 bit，封顶 63；求解器对超过 63 的真实 DTM 一律存 63
 static constexpr int TB_MAX_DIST = 63;
 
-// 只读加载一个表库文件，不写回、不修改。
+// 只读加载一个表库文件，不写回、不修改。映射经 platform.h 统一封装。
 struct LoadedTB {
-    int fd = -1;
     uint8_t* map = nullptr;
     uint64_t size = 0;
     const TBHeader* header = nullptr;
     const uint8_t* data = nullptr;
 
     bool load(const std::string& path, int expect_k) {
-        fd = ::open(path.c_str(), O_RDONLY);
-        if (fd < 0) {
-            std::perror("open");
-            return false;
-        }
-        struct stat st;
-        if (::fstat(fd, &st) < 0) {
-            std::perror("fstat");
-            ::close(fd);
-            fd = -1;
+        uint64_t fsz = 0;
+        map = static_cast<uint8_t*>(os_map_file_read(path, fsz));
+        if (!map) {
+            std::cerr << "  [load] 无法映射 " << path << "\n";
             return false;
         }
 
         uint64_t expect_size = sizeof(TBHeader) + bucket_size(expect_k);
-        if (static_cast<uint64_t>(st.st_size) != expect_size) {
-            std::cerr << "  [header] 文件大小不符: got " << st.st_size
+        if (fsz != expect_size) {
+            std::cerr << "  [header] 文件大小不符: got " << fsz
                       << " expected " << expect_size << "\n";
-            ::close(fd);
-            fd = -1;
-            return false;
-        }
-
-        map = static_cast<uint8_t*>(
-            ::mmap(nullptr, st.st_size, PROT_READ, MAP_PRIVATE, fd, 0));
-        if (map == MAP_FAILED) {
-            std::perror("mmap");
-            ::close(fd);
-            fd = -1;
+            os_unmap(map, fsz);
             map = nullptr;
             return false;
         }
@@ -101,12 +81,8 @@ struct LoadedTB {
 
     void close() {
         if (map) {
-            ::munmap(map, sizeof(TBHeader) + size);
+            os_unmap(map, sizeof(TBHeader) + size);
             map = nullptr;
-        }
-        if (fd >= 0) {
-            ::close(fd);
-            fd = -1;
         }
         header = nullptr;
         data = nullptr;
@@ -303,7 +279,7 @@ static void check_range(int k,
 }
 
 int main(int argc, char** argv) {
-    std::string data_dir = "./data/tb";
+    std::string data_dir = kDefaultDataDir;
     int start_k = 4;
     int end_k = 5;
     int threads = 0;
@@ -349,9 +325,7 @@ int main(int argc, char** argv) {
     for (int k = load_min; k <= end_k; ++k) {
         if (k < 4) continue;  // k<4 平凡狼胜，无需文件
 
-        int d1 = k / 10, d2 = k % 10;
-        std::string path = data_dir + "/wsf_tb_dtc_k" +
-                           std::to_string(d1) + std::to_string(d2) + ".bin";
+        std::string path = tb_bucket_path(data_dir, k);
         std::cout << "Loading k=" << k << ": " << path << "\n";
         if (!tbs[k].load(path, k)) {
             std::cerr << "Failed to load k=" << k << " tablebase.\n";

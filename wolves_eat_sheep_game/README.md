@@ -1,47 +1,41 @@
-# 狼羊棋
+# 狼羊棋 · 规则库（rules.py）
 
-5×5 本地双人棋盘游戏。狼先行，点击当前方棋子，再点击高亮目标格完成一步。
+5×5 狼羊棋的**纯标准库**规则实现（棋盘状态、走法生成、胜负判定），零第三方依赖。
+这是当前仓库唯一保留的游戏代码模块：早期附带的 Pygame 终端游戏与 DQN 训练/推理
+（`game.py` / `train_ai.py` / `ai_engine.py` 等）已全部移除；本规则库由
+**Web 人机对战**（`web/server.py`）复用。
 
 ## 规则
 
-- 初始时上三排为 15 只黑方羊，第四排为空，第五排中间三格为红方狼。
+- 初始时上三排为 15 只羊，第四排为空，第五排中间三格为狼；**狼先行**。
 - 狼和羊每回合只能向上、下、左、右移动一格，不能斜走。
-- 狼与羊之间恰好隔一个空格时，可直线跨过该空格，落到羊所在格并吃掉该羊；每回合最多吃一只，吃后立即换羊方。
+- 狼与羊之间恰好隔一个空格时，可直线跨过该空格，落到羊所在格并吃掉该羊；
+  每回合最多吃一只，吃后立即换羊方。
 - 羊只可移动，通过围堵取胜。
-- 羊剩余不足 4 只，狼方获胜。
-- 3 只狼均无法移动，羊方获胜。
-- 同一个棋子在两个格之间来回移动计为走闲；必须是同一个棋子连续往返，其他棋子移动会中断计数。
-- 狼、羊同一棋子连续往返达到 5 步只扣分；双方都达到 5 步时判平局。
-- 双方合计走满 150 步仍未分出胜负时判平局。
+- **狼胜**：羊剩余不足 4 只。
+- **羊胜**：3 只狼均无法移动。
+- **和棋**：走闲规则（同一棋子连续往返 5 次）触发，或双方合计走满 150 步。
 
-## 运行
+## 接口
 
-```bash
-python -m pip install -r requirements.txt
-python game.py
+- `GameState(idle_limit=None, max_moves=150)`：状态对象（`board` 5×5、
+  `turn`、`winner`、`sheep_count`、`move_count` 等）。
+- `GameState.move((r1,c1), (r2,c2)) -> bool`：走一步，返回是否合法（吃子自动结算）。
+- `GameState.legal_moves_from((r,c)) -> list[Move]`：某格棋子的合法走法
+  （`Move.destination`、`Move.captured`）。
+- 常量：`WOLF / SHEEP / DRAW`。
+
+## 使用
+
+```python
+import sys
+sys.path.insert(0, "wolves_eat_sheep_game")
+from rules import GameState, WOLF, SHEEP, DRAW
+
+g = GameState(idle_limit=None, max_moves=150)
+g.move((4, 1), (3, 1))          # 狼向上一步
+print(g.winner, g.sheep_count)  # None 15
 ```
 
-启动后先选择对局模式：
-
-- 双人对局：玩家交替执狼、羊。
-- 玩家 vs 模型：玩家选择执狼或执羊。
-- 模型对局：当前模型同时控制狼、羊。
-- 对局回放：从 `replays/json/` 选择棋谱。
-
-完成的对局自动保存到 `replays/json/game_*.json`。
-
-对局和回放界面都有“旋转 180°”按钮。它只改变棋盘显示方向，不改变狼羊回合、棋盘逻辑坐标或胜负规则。
-
-对局界面提供“悔棋”和“切换执棋方”。人机-人机模式提供“暂停/继续”。
-
-棋盘和棋子素材由 micu-image-mcp 生成。
-
-## 模型
-
-AI 使用共享 Double DQN，最优权重为：
-
-```text
-checkpoints/rv14/best_selfplay_dqn.pt
-```
-
-由自对弈训练产生（100000 集，`reward_version=14`，`rules_version=2`）。游戏启动时会自动加载该权重；模型结构与推理函数位于 `train_ai.py`。
+说明：棋盘上“狼跳过羊”的吃子规则见 `GameState.move` 的跳吃逻辑；完整的最优
+走子（表库结论）不在此模块，见仓库根目录的逆向求解器与 `web/`。

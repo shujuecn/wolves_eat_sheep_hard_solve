@@ -5,15 +5,15 @@
 - 交互节奏：玩家走子后服务端**不立即让模型应手**（响应里 model_to_move=true），
   网页端等待 1 秒后再调 advance，模型才走子（符合“玩家行棋后隔一秒再由模型走棋”）。
 - 每步响应包含：
-    analysis   —— 当前回合方的多条候选最优续着（羊数≤n 用表库结论；>n 用 DQN Top-N）
+    analysis   —— 当前回合方的多条候选最优续着（表库结论，Top-N）
     log        —— 对局记录：每一步(玩家/模型)的走子 + 走完后局面的最优解结论
     legal      —— 当前回合方全部合法走法（网页点选高亮用）
     verdict    —— 当前局面最优解（狼胜/羊胜/和棋 + 最快步数）
-- 引擎逻辑：羊数 ≤ 已解出最大 k 用表库，否则用 DQN（与 hard_solve_fast + ai_engine 一致）：
-    羊数 > n  → DQN 模型（checkpoints/rv14/best_selfplay_dqn.pt）
-    羊数 ≤ n  → 硬解表库（data/tb_test，mmap 只读）
-- n 不写死：程序启动时快速扫描表库目录（只读各文件 64 字节头，立即完成），
-  取"已截完"（magic=WSTB 且 completed 标志=1、尺寸正确）的最大 k 作为分界 n；
+- 引擎逻辑：全部走子决策都基于硬解表库（纯规则逆推，k=4..15 已全部解出，
+  开局羊数 15 ≤ 15，整局都在表库覆盖范围内）。不再需要 DQN/神经网络。
+  - 羊数 ≤ 已解出最大 k → 表库（mmap 只读）最优解应手
+- k 上限不写死：程序启动时快速扫描表库目录（只读各文件 64 字节头，立即完成），
+  取"已截完"（magic=WSTB 且 completed 标志=1、尺寸正确）的最大 k 作为分界；
   硬解表库持续扩充后，重启即自动用上新截完的层。
 
 运行（SSH 场景）：
@@ -32,14 +32,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))                              # hard_solve_fast
-sys.path.insert(0, str(ROOT / "wolves_eat_sheep_game"))    # rules, ai_engine
+sys.path.insert(0, str(ROOT / "wolves_eat_sheep_game"))    # rules
 
 from rules import GameState, WOLF, SHEEP, DRAW  # noqa: E402
 import hard_solve_fast as hsf  # noqa: E402
-import ai_engine  # noqa: E402
 
-ASSETS_DIR = ROOT / "wolves_eat_sheep_game" / "assets"
-CKPT_PATH = ROOT / "wolves_eat_sheep_game" / "checkpoints" / "rv14" / "best_selfplay_dqn.pt"
 INDEX_PATH = Path(__file__).parent / "index.html"
 
 TB_RESULT_LABEL = {hsf.WOLF_WIN: "狼胜", hsf.SHEEP_WIN: "羊胜", hsf.DRAW: "和棋", hsf.UNKNOWN: "未知"}
@@ -56,7 +53,7 @@ def move_label(result: int, dist: int) -> str:
 # ============================================================
 # 硬解表库（mmap 只读；文件未完成/不存在 → 该 k 不可用）
 # ============================================================
-TB_FILE_RE = re.compile(r"wsf_tb_dtc_k(\d+)\.bin\Z")
+TB_FILE_RE = re.compile(r"dtc_k(\d+)\.bin\Z")
 
 
 def tb_file_completed(path: str, k: int) -> bool:
@@ -75,7 +72,7 @@ def tb_file_completed(path: str, k: int) -> bool:
 
 
 def max_completed_k(data_dir: str) -> int:
-    """启动时扫描表库目录，返回已截完的最大 k（作为 羊数>n→DQN / ≤n→表库 的分界）。
+    """启动时扫描表库目录，返回已截完的最大 k（作为表库覆盖的分界）。
 
     兜底 3：k<4 由对局规则硬编码为狼胜（lookup 直接返回 WOLF_WIN），无需表库。
     """
@@ -104,7 +101,7 @@ class Tablebase:
     def _open(self, k: int) -> bool:
         if k in self._mm:
             return True
-        path = os.path.join(self.dir, f"wsf_tb_dtc_k{k:02d}.bin")
+        path = os.path.join(self.dir, f"dtc_k{k:02d}.bin")
         try:
             with open(path, "rb") as f:
                 size = os.fstat(f.fileno()).st_size
@@ -155,32 +152,36 @@ class Tablebase:
 
 
 # ============================================================
-# DQN（懒加载；进程内只加载一次）
+# FEN 解析（悔棋恢复局面用；原 ai_engine.game_from_fen 已随 DQN 一并移除以
+# 去除 torch/ai_engine 依赖，表库引擎不需要神经网络）
 # ============================================================
-_net = None
-
-
-def dqn_network():
-    global _net
-    if _net is None:
-        device = ai_engine.choose_device()
-        ckpt = ai_engine.torch.load(CKPT_PATH, map_location=device, weights_only=False)
-        net = ai_engine.QNetwork().to(device)
-        ai_engine.restore_network_state(net, ckpt["model_state"], ckpt.get("state_channels", 4))
-        net.eval()
-        _net = (net, device)
-    return _net
-
-
-def dqn_move(game: GameState):
-    net, device = dqn_network()
-    actions = ai_engine.legal_actions(game)
-    if not actions:
-        return None
-    action = ai_engine.greedy_action(
-        net, ai_engine.encode_state(game),
-        ai_engine.tactical_policy_actions(game, actions), device)
-    return ai_engine.decode_action(action)
+def game_from_fen(fen: str) -> GameState:
+    parts = fen.split()
+    if len(parts) < 2:
+        raise ValueError(f"bad fen: {fen!r}")
+    rows = parts[0].split("/")
+    if len(rows) != 5:
+        raise ValueError(f"bad fen rows: {fen!r}")
+    game = GameState(idle_limit=None, max_moves=150)
+    game.board = [[None for _ in range(5)] for _ in range(5)]
+    for r, row in enumerate(rows):
+        c = 0
+        for ch in row:
+            if ch.isdigit():
+                c += int(ch)
+            elif ch == "w":
+                game.board[r][c] = WOLF
+                c += 1
+            elif ch == "s":
+                game.board[r][c] = SHEEP
+                c += 1
+            else:
+                raise ValueError(f"bad fen char {ch!r} in {fen!r}")
+        if c != 5:
+            raise ValueError(f"bad fen row width in {fen!r}")
+    game.turn = WOLF if parts[1] == "w" else SHEEP
+    game.move_count = int(parts[2]) if len(parts) > 2 else 0
+    return game
 
 
 # ============================================================
@@ -220,21 +221,16 @@ class Session:
 
     # ---------- 引擎：选一步 ----------
     def phase(self) -> str:
-        return "dqn" if self.game.sheep_count > self.tb.max_k else "tb"
+        # 纯表库引擎：开局羊数 15 ≤ 已解出最大 k（现为 15），整局都被覆盖
+        return "tb"
 
     def choose_model(self):
         """为当前回合方选一步；返回 (start, dest, note) 或 None。"""
-        if self.phase() == "dqn":
-            move = dqn_move(self.game)
-            if move is None:
-                return None, None, "DQN 无可用走法"
-            (r1, c1), (r2, c2) = move
-            return (r1, c1), (r2, c2), f"DQN 模型 v14（羊数 {self.game.sheep_count} > {self.tb.max_k}）"
         choice = self.tb.best_move(self.game)
         if choice is None:
             return None, None, f"硬解表库 k={self.game.sheep_count} 未求解"
         (r1, c1), mv = choice
-        return (r1, c1), mv.destination, f"硬解表库 k={self.game.sheep_count}（羊数 ≤ {self.tb.max_k}）"
+        return (r1, c1), mv.destination, f"硬解表库 k={self.game.sheep_count} 最优解"
 
     # ---------- 走子 ----------
     def _push_log(self, side, r1, c1, r2, c2, captured_idx):
@@ -311,7 +307,7 @@ class Session:
         if len(self.history) < 2:
             return False, "没有可悔的棋"
         self.history.pop()
-        self.game = ai_engine.game_from_fen(self.history[-1])
+        self.game = game_from_fen(self.history[-1])
         keep = set(self.history)
         self.log = [e for e in self.log if e["fen"] in keep]
         self.model_move = None
@@ -350,8 +346,6 @@ class Session:
             return "羊胜·终局"
         if g.winner == DRAW:
             return "和棋·终局"
-        if g.sheep_count > self.tb.max_k:
-            return "DQN 引导"
         if not self.tb._open(g.sheep_count):
             return f"表库 k={g.sheep_count}"
         known, result, dist = self.tb.lookup(g)
@@ -380,7 +374,7 @@ class Session:
         展示池 = 全部合法走法（对模型有利/不利的都列出）；
         排序：对当前回合方有利 → 步数最少者优先；其次和棋；最后不利方（拖得越久越优先）。
         轮到模型走时，用 choose_model 的同一套规则挑选“对它有利且最快步数最少”的一步
-        （羊数≤n 为表库最优：取胜最快；>n 为 DQN 贪心安全步），并在对应行打 exec 标记。
+        （全部来自表库最优解），并在对应行打 exec 标记。
         """
         g = self.game
         if g.winner is not None:
@@ -396,40 +390,22 @@ class Session:
                 exec_from = picked[0][0] * 5 + picked[0][1]
                 exec_to = picked[1][0] * 5 + picked[1][1]
         rows = None
-        if g.sheep_count <= self.tb.max_k:
-            if not self.tb._open(g.sheep_count):
-                return None
-            my_win = hsf.WOLF_WIN if g.turn == WOLF else hsf.SHEEP_WIN
-            scored = []
-            for m in legal:
-                trial = copy.deepcopy(g)
-                if not trial.move((m["from"] // 5, m["from"] % 5), (m["to"] // 5, m["to"] % 5)):
-                    continue
-                known, result, dist = self.tb.lookup(trial)
-                if not known:
-                    continue
-                rank = 2 if result == my_win else (1 if result == hsf.DRAW else 0)
-                sec = -dist if rank == 2 else (dist if rank == 0 else 0)
-                scored.append((rank, sec, dict(m, label=move_label(result, dist))))
-            scored.sort(key=lambda x: (x[0], x[1]), reverse=True)
-            rows = [s[2] for s in scored[:limit]]
-        else:
-            # DQN 阶段：全部合法走法按 Q 值排序展示（有利/无利都放）
-            try:
-                net, device = dqn_network()
-                act_map = {
-                    ai_engine.encode_action((m["from"] // 5, m["from"] % 5),
-                                            (m["to"] // 5, m["to"] % 5)): m
-                    for m in legal
-                }
-                with ai_engine.torch.no_grad():
-                    values = net(ai_engine.encode_state(g).unsqueeze(0).to(device))[0]
-                scored = sorted(
-                    ((float(values[a].item()), a) for a in act_map), reverse=True)
-                rows = [dict(act_map[a], label=f"DQN候选 Q {q:.2f}")
-                        for q, a in scored[:limit]]
-            except Exception:  # noqa: BLE001  （权重加载失败等，分析降级为空）
-                rows = None
+        if not self.tb._open(g.sheep_count):
+            return None
+        my_win = hsf.WOLF_WIN if g.turn == WOLF else hsf.SHEEP_WIN
+        scored = []
+        for m in legal:
+            trial = copy.deepcopy(g)
+            if not trial.move((m["from"] // 5, m["from"] % 5), (m["to"] // 5, m["to"] % 5)):
+                continue
+            known, result, dist = self.tb.lookup(trial)
+            if not known:
+                continue
+            rank = 2 if result == my_win else (1 if result == hsf.DRAW else 0)
+            sec = -dist if rank == 2 else (dist if rank == 0 else 0)
+            scored.append((rank, sec, dict(m, label=move_label(result, dist))))
+        scored.sort(key=lambda x: (x[0], x[1]), reverse=True)
+        rows = [s[2] for s in scored[:limit]]
         if rows and exec_from is not None:
             for r in rows:
                 if r["from"] == exec_from and r["to"] == exec_to:
@@ -442,14 +418,11 @@ class Session:
         g = self.game
         board = [g.board[i // 5][i % 5] for i in range(25)]
         verdict = {"known": False, "label": ""}
-        if g.sheep_count > self.tb.max_k:
-            verdict = {"known": False, "label": f"引导阶段 · 羊数 {g.sheep_count} > {self.tb.max_k}"}
+        known, result, dist = self.tb.lookup(g)
+        if known:
+            verdict = {"known": True, "label": move_label(result, dist)}
         else:
-            known, result, dist = self.tb.lookup(g)
-            if known:
-                verdict = {"known": True, "label": move_label(result, dist)}
-            else:
-                verdict = {"known": False, "label": f"表库 k={g.sheep_count} 未求解"}
+            verdict = {"known": False, "label": f"表库 k={g.sheep_count} 未求解"}
         terminal = None
         if g.winner == WOLF:
             terminal = {"result": "狼胜", "reason": "羊被吃到不足 4 只"}
@@ -558,7 +531,7 @@ def main():
     ap = argparse.ArgumentParser(description="狼羊棋 网页版后端")
     ap.add_argument("--port", type=int, default=8080)
     ap.add_argument("--host", default="127.0.0.1")
-    ap.add_argument("--data-dir", default=str(ROOT / "data" / "tb_test"))
+    ap.add_argument("--data-dir", default=str(ROOT / "data" / "ws_tb_dtc_260819"))
     args = ap.parse_args()
 
     global session
@@ -568,8 +541,8 @@ def main():
     print("=== 狼羊棋 · 网页版 ===", flush=True)
     print(f"本机访问: http://{args.host}:{args.port}", flush=True)
     print(f"远端开发(ssh 端口转发): ssh -L {args.port}:127.0.0.1:{args.port} <user>@<host>", flush=True)
-    print(f"硬解表库: {args.data_dir}（已截完 k ≤ {tb.max_k}；羊数 > {tb.max_k} 用 DQN）", flush=True)
-    print(f"模型: {CKPT_PATH}", flush=True)
+    print(f"硬解表库: {args.data_dir}（已截完 k ≤ {tb.max_k}；开局羊数 15 全程在表库覆盖内）", flush=True)
+    print("引擎: 表库纯最优解（无神经网络依赖）", flush=True)
     print("Ctrl-C 退出。", flush=True)
     try:
         srv.serve_forever()

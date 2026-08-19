@@ -55,13 +55,29 @@ struct TBHeader {
 static_assert(sizeof(TBHeader) == 64, "TBHeader must be 64 bytes");
 
 // ============================================================
+// 表库目录与文件命名（所有工具共用）
+// ============================================================
+
+// 默认表库目录（本仓库已解出的 k=4..15 全量表库所在目录）
+inline constexpr const char* kDefaultDataDir = "data/ws_tb_dtc_260819";
+
+// 桶文件路径：<data_dir>/dtc_kXX.bin（路径分隔统一用 '/'，Windows 兼容）
+inline std::string tb_bucket_path(const std::string& data_dir, int k) {
+    std::string name = "dtc_k";
+    if (k < 10) name += '0';
+    name += std::to_string(k);
+    name += ".bin";
+    return data_dir + "/" + name;
+}
+
+// ============================================================
 // 表库类
 // ============================================================
 
 class Tablebase {
 public:
-    Tablebase() : k_(-1), data_(nullptr), size_(0), fd_(-1),
-                  file_backed_(false) {}
+    // 无成员句柄：create() 用匿名内存工作区；open() 只读映射已完成文件
+    Tablebase() : k_(-1), data_(nullptr), size_(0), file_backed_(false) {}
     ~Tablebase();
 
     // 不可复制
@@ -111,9 +127,8 @@ private:
     int k_;
     uint8_t* data_;
     uint64_t size_;
-    int fd_;
     std::string path_;
-    bool file_backed_;  // true = 数据映射自输出文件（已完成桶）；false = 匿名工作区
+    bool file_backed_;  // true = 只读映射自已完成文件；false = 匿名工作区（求解中）
 };
 
 // ============================================================

@@ -8,7 +8,7 @@
  *               [--start-k K] [--end-k K] [--verbose] [--quiet]
  *               [--no-symmetry]
  *
- * 默认 data_dir = ./data/tb
+ * 默认 data_dir = data/ws_tb_dtc_260819（k=4..15 全量表库）
  */
 
 #include "board.h"
@@ -28,7 +28,8 @@ using namespace wolves;
 void print_usage(const char* prog) {
     std::cout << "Usage: " << prog << " [options]\n"
               << "Options:\n"
-              << "  --data-dir <path>   Tablebase directory (default: ./data/tb)\n"
+              << "  --data-dir <path>   Tablebase directory (default: "
+              << kDefaultDataDir << ")\n"
               << "  --threads N         Number of threads (default: all cores)\n"
               << "  --start-k K         Start from bucket k (default: 4)\n"
               << "  --end-k K           End at bucket k (default: 15)\n"
@@ -39,7 +40,7 @@ void print_usage(const char* prog) {
 }
 
 int main(int argc, char** argv) {
-    std::string data_dir = "./data/tb";
+    std::string data_dir = kDefaultDataDir;
     RetroSolverConfig config;
 
     int start_k = 4;

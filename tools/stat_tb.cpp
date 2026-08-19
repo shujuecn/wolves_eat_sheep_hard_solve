@@ -5,22 +5,20 @@
 //       因此可以随时在求解进程运行期间安全使用。
 //
 // 用法：
-//   ./build/stat_tb [--data-dir data/tb_test] [--raw]
+//   ./build/stat_tb [--data-dir data/ws_tb_dtc_260819] [--raw]
 //     --raw  每个 k 额外打印精确原始计数（小概率项不再被百分比舍入吞掉）
 //
 // 实现说明：每条目 1 字节（bits0-1 结果，bits2-7 距离）。索引 idx 的奇偶即回合
 // 位（state_index = (...)*2 + turn，turn=1 表示羊回合 → 奇数索引 = 轮到羊）。
-// 纯顺序 mmap 读 + 位运算，5GB 数据约十几秒；不写任何文件。
+// 纯顺序只读映射 + 位运算，约 17GB 数据不到 1 分钟；不写任何文件。
+// 跨平台：文件映射经 include/platform.h 统一封装（Windows/macOS/Linux）。
 #include "tablebase.h"
+#include "platform.h"
 
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
-#include <fcntl.h>
 #include <string>
-#include <sys/mman.h>
-#include <sys/stat.h>
-#include <unistd.h>
 
 using namespace wolves;
 
@@ -33,7 +31,7 @@ struct Counts {
 } // namespace
 
 int main(int argc, char** argv) {
-    std::string dir = "data/tb_test";
+    std::string dir = kDefaultDataDir;
     bool raw = false;
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--data-dir") == 0 && i + 1 < argc) dir = argv[++i];
@@ -47,19 +45,15 @@ int main(int argc, char** argv) {
     int done = 0;
 
     for (int k = 4; k <= 15; ++k) {
-        char path[512];
-        std::snprintf(path, sizeof path, "%s/wsf_tb_dtc_k%02d.bin", dir.c_str(), k);
-        int fd = ::open(path, O_RDONLY);
-        if (fd < 0) continue;
-        struct stat st;
-        if (::fstat(fd, &st) != 0 || st.st_size < 64) { ::close(fd); continue; }
-        char hdr[64];
-        if (::pread(fd, hdr, 64, 0) != 64) { ::close(fd); continue; }
-        if ((unsigned char)hdr[24] != 1) { ::close(fd); continue; }  // completed!=1 跳过
-        uint64_t entries = (uint64_t)st.st_size - 64;
+        uint64_t fsz = 0;
         const uint8_t* map = static_cast<const uint8_t*>(
-            ::mmap(nullptr, (size_t)st.st_size, PROT_READ, MAP_PRIVATE, fd, 0));
-        if (map == MAP_FAILED) { ::close(fd); continue; }
+            os_map_file_read(tb_bucket_path(dir, k), fsz));
+        if (!map) continue;
+        if (fsz < 64 || map[24] != 1) {  // completed!=1 跳过
+            os_unmap(const_cast<uint8_t*>(map), fsz);
+            continue;
+        }
+        uint64_t entries = fsz - 64;
 
         Counts w, s;
         uint64_t unk = 0;
@@ -89,8 +83,7 @@ int main(int argc, char** argv) {
         gBytes += entries;
         gUnknown += unk;
         ++done;
-        ::munmap((void*)map, (size_t)st.st_size);
-        ::close(fd);
+        os_unmap(const_cast<uint8_t*>(map), fsz);
     }
 
     if (done == 0) {

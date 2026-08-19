@@ -292,13 +292,13 @@ def read_tb(path: str) -> Optional[Tuple[int, bytes]]:
 # ============================================================
 
 class FastSolver:
-    def __init__(self, data_dir: str = "./data/tb"):
+    def __init__(self, data_dir: str = "./data/ws_tb_dtc_260819"):
         self.data_dir = data_dir
         os.makedirs(data_dir, exist_ok=True)
         self._cache = {}  # (k, idx) -> entry
     
     def _path(self, k: int) -> str:
-        return os.path.join(self.data_dir, f"wsf_tb_dtc_k{k:02d}.bin")
+        return os.path.join(self.data_dir, f"dtc_k{k:02d}.bin")
     
     def solve_bucket(self, k: int, max_iters: int = 200) -> bool:
         if k < 4:
@@ -533,7 +533,7 @@ def main():
     parser = argparse.ArgumentParser(description="Wolves Eat Sheep — Fast Hard Solve")
     parser.add_argument('--start-k', type=int, default=4)
     parser.add_argument('--end-k', type=int, default=6)
-    parser.add_argument('--data-dir', type=str, default='./data/tb')
+    parser.add_argument('--data-dir', type=str, default='./data/ws_tb_dtc_260819')
     args = parser.parse_args()
     
     print("=== Wolves Eat Sheep — Fast Hard Solve ===")

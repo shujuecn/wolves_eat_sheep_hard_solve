@@ -6,7 +6,7 @@
 
 - 求解器：C++20，并行无锁原子，多线程
 - 表库：约 **188 亿条目 / 17.5 GB**（k=4…15 全量已解出）
-- 附带：浏览器人机对战（Web 版，表库 + DQN 混合引擎）
+- 附带：浏览器人机对战（Web 版，**纯表库引擎**，已移除 DQN/神经网络）
 
 ---
 
@@ -48,7 +48,7 @@
    被解析完毕后（LOSS 计数归零）判负，距离取 `max(d, 跨桶最大 LOSS 距离 + 1)`；
    出现必胜后继则立即赋值并取最短距离。
 3. 剩余 UNKNOWN 统一判为 **DRAW**。
-4. 结果写入表库文件（`data/tb_test/wsf_tb_dtc_k*.bin`）。
+4. 结果写入表库文件（`data/ws_tb_dtc_260819/dtc_k*.bin`）。
 
 另有早期**原始迭代求解器** `solve_all`（solver.cpp，逐步迭代逼近），保留作对照与校验。
 
@@ -72,13 +72,17 @@
   用「未决后继计数」在归零瞬间判定 LOSS，得到最优距离。
 - **跨桶吃子一体化**：吃子后继直接引用已完成的 k-1 表；`loss_dists` 记录跨桶
   LOSS 最大距离，保证吃子路径的 DTM 也最优。
-- **无锁并行**：`__atomic` 字节级原子操作（load/cas/fetch-sub）在多线程间安全更新
+- **无锁并行 + 跨平台原子**：`include/platform.h` 统一封装 uint8 原子操作
+  （GCC/Clang 用 `__atomic_*`，MSVC 用 `_Interlocked*`），多线程间安全更新
   表库与计数；按 64K 状态分块争抢任务，每线程独立局部距离桶，波间合并。
 - **匿名内存 + 完成后一次性顺序写盘**：求解全程表库驻留匿名内存，零磁盘 I/O；
   整桶解完后一次性顺序写出（对 RAID5/机械盘友好）。此设计解决了一个实际瓶颈——
   原先 `mmap(MAP_SHARED)` 把 2.97GB 输出文件当工作内存全程随机写，脏页回写把
   32 个工作线程全部拖入内核写回节流的 `D` 状态（htop 里一片红 D、只剩 1 线程），
   修复后 k=12 从数小时爬行提速到 **977 秒**。
+- **跨平台可迁移**：所有 POSIX 专属能力（匿名 mmap、文件映射、原子操作）都收敛在
+  `include/platform.h`，业务代码平台无关；CMake 提供 Windows/MSVC、macOS、
+  Linux 统一构建（见 §5.1）。
 
 ---
 
@@ -109,49 +113,64 @@
 
 ### 5.1 构建
 
-需要 g++（C++20）。本机无系统 make 时使用仓库内自定义工具链：
+跨平台构建统一走 **CMake**（需要支持 C++20 的编译器：GCC ≥ 11 / Clang ≥ 14 /
+MSVC 2019+；Windows 用 VS2022 生成器）。生成的全部工具在 `build/`（建议
+`build-cmake/` 区分旧产物）：
 
 ```bash
-export PATH=/home/agent074/tools/gcc-local/usr/bin:$PATH   # 仅自定义工具链环境需要
-make -j8            # 构建全部求解/校验工具到 build/
+# Linux / macOS
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j$(nproc)
+
+# Windows（PowerShell，VS2022 已装）
+cmake -B build -G "Visual Studio 17 2022" -A x64 -DCMAKE_BUILD_TYPE=Release
+cmake --build build --config Release -j
+
+# 可选：GCC/Clang 启用本机微架构优化（二进制不可跨机拷贝）
+cmake -B build -DCMAKE_BUILD_TYPE=Release -DWOLVES_NATIVE_OPT=ON
 ```
 
-或用 CMake：`cmake -B build-cmake && cmake --build build-cmake -j8`。
+> 本开发机（无系统 g++/make）使用仓库内的自定义 GCC 11 工具链：
+> `cmake -B build -DCMAKE_TOOLCHAIN_FILE=cmake/gcc-local-toolchain.cmake -DCMAKE_BUILD_TYPE=Release -DWOLVES_NATIVE_OPT=ON`
 
 ### 5.2 求解
 
 ```bash
 # 逆向分析求解（推荐）：k=4→15 全量；支持 --start-k/--end-k 分段、断桶续算
-./build/solve_retro --data-dir data/tb_test --threads 32 --start-k 4 --end-k 15
+./build/solve_retro --data-dir data/ws_tb_dtc_260819 --threads 32 --start-k 4 --end-k 15
 
 # 原始迭代求解器（对照用）
-./build/solve_all --data-dir data/tb --verbose
+./build/solve_all --data-dir data/ws_tb_dtc_260819 --verbose
 ```
 
-说明：`data/tb_test` 里已解出的 `.bin` 表库不在版本库中（gitignore），
-新克隆后需重新求解，或从原环境拷贝。
+说明：全部 12 桶（k=4…15）已解出并存于 `data/ws_tb_dtc_260819/`（文件名
+`dtc_k04.bin … dtc_k15.bin`，共约 18 GB）。这些 `.bin` 表库**不入版本库**
+（gitignore），新克隆后需重新求解，或从原环境拷贝。`--data-dir` 默认即指向
+`data/ws_tb_dtc_260819`，不传也可。
 
 ### 5.3 校验与统计
 
 ```bash
-make test                                   # 规则引擎自检 + 走法对拍
-./build/check_tb --data-dir data/tb_test --threads 32   # k=4/k=5 逐局面 minimax 独立性校验
-./build/stat_tb  --data-dir data/tb_test                # 各桶结果分布统计（--raw 原始计数）
-./build/verify   --data-dir data/tb_test --samples 10000
-./build/dump_opening_book --data-dir data/tb_test --output opening_book.json
+./build/selfcheck                                   # 规则引擎自检
+./build/crosscheck                                 # 走法生成对拍（vs tests/crosscheck/crosscheck.py）
+./build/check_tb --data-dir data/ws_tb_dtc_260819 --threads 32   # k=4/k=5 逐局面 minimax 独立性校验
+./build/stat_tb  --data-dir data/ws_tb_dtc_260819                # 各桶结果分布统计（--raw 原始计数）
+./build/verify   --data-dir data/ws_tb_dtc_260819 --samples 10000
+./build/dump_opening_book --data-dir data/ws_tb_dtc_260819 --output opening_book.json
 ```
 
 ### 5.4 Web 游戏（人机对战）
 
+纯 Python 标准库后端 + 单文件前端，**零第三方依赖、零神经网络**：
+
 ```bash
-pip3 install torch            # DQN 推理依赖（羊数大于表库最大 k 时使用）
 python3 web/server.py --port 8080
 ```
 
 本机访问（SSH 端口转发）：`ssh -L 8080:127.0.0.1:8080 <用户>@<服务器>` → 浏览器打开 `http://127.0.0.1:8080`。
-引擎逻辑：羊数 ≤ 已解出最大 k（当前 15）用表库最优应手，否则用 DQN 模型
-（`wolves_eat_sheep_game/checkpoints/rv14/best_selfplay_dqn.pt`）。
-详见 [web/README.md](web/README.md)。
+引擎逻辑：全部走子决策基于硬解表库最优解（开局羊数 15 ≤ 已解出的最大 k=15，
+整局都在表库覆盖范围内）。启动时自动扫描表库目录并取"已截完"的最大 k 作分界，
+表库扩充后重启即生效。详见 [web/README.md](web/README.md)。
 
 ---
 
@@ -159,6 +178,7 @@ python3 web/server.py --port 8080
 
 ```
 ├── src/ include/          # C++ 求解核心（board/encode/symmetry/tablebase/solver/solver_retro）
+│   └── include/platform.h # 跨平台封装：匿名大块内存 / 只读文件映射 / uint8 原子
 ├── tools/                 # 求解与校验工具入口
 │   ├── solve_retro.cpp    # 逆向分析主求解器（唯一 CLI 参数 --data-dir/--threads/--start-k/--end-k）
 │   ├── solve_all.cpp      # 原始迭代求解器
@@ -168,11 +188,12 @@ python3 web/server.py --port 8080
 │   ├── crosscheck.cpp     # 走法生成对拍（vs Python rules.py）
 │   ├── selfcheck.cpp      # 规则引擎自检
 │   └── dump_opening_book.cpp  # 开局库导出
-├── web/                   # 网页版人机对战（Python 标准库后端 + 单文件前端）
-├── wolves_eat_sheep_game/ # 游戏规则库(rules.py) + DQN 推理(ai_engine.py) + 权重/素材
+├── web/                   # 网页版人机对战（Python 标准库后端 + 单文件前端，纯表库引擎）
+├── wolves_eat_sheep_game/ # 游戏规则库 rules.py（纯标准库，Web 后端复用）
 ├── tests/crosscheck/      # 对拍脚本
-├── data/tb_test/          # 已解表库输出（k=4..15，gitignore）
-├── Makefile  CMakeLists.txt
+├── data/ws_tb_dtc_260819/ # 已解表库输出（dtc_k04..15.bin，共约 18 GB，gitignore）
+├── CMakeLists.txt         # 跨平台构建（Windows/macOS/Linux）
+├── cmake/gcc-local-toolchain.cmake  # 本开发机自定义 GCC11 工具链（可选）
 └── hard_solve_fast.py     # Python 表库读取器（Web 引擎复用）
 ```
 
@@ -180,10 +201,13 @@ python3 web/server.py --port 8080
 
 | 目标 / 命令 | 作用 |
 |---|---|
-| `make all` / `make` | 构建全部工具 |
-| `make test` | 运行 selfcheck + crosscheck |
+| `cmake --build build -j` | 构建全部工具 |
 | `build/solve_retro` | 逆向分析求解器（主） |
+| `build/solve_all` | 原始迭代求解器（对照） |
 | `build/check_tb` | 表库逐局面校验 |
 | `build/stat_tb` | 表库分布统计 |
+| `build/verify` | 表库抽样一致性验证 |
+| `build/crosscheck` | 走法生成对拍（vs Python） |
+| `build/selfcheck` | 规则引擎自检 |
 | `build/dump_opening_book` | 导出开局库 JSON |
-| `make web` / `python3 web/server.py` | 网页人机对战 |
+| `python3 web/server.py` | 网页人机对战（纯表库引擎） |

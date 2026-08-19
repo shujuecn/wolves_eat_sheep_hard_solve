@@ -140,7 +140,7 @@ bool check_terminal_consistency(TablebaseManager& tb_manager, int samples) {
 }
 
 int main(int argc, char** argv) {
-    std::string data_dir = "./data/tb";
+    std::string data_dir = kDefaultDataDir;
     int samples = 10000;
     bool do_symmetry = true;
     bool do_terminal = true;

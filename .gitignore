@@ -1,5 +1,6 @@
 # Build
 build/
+build-cmake/
 *.o
 *.a
 *.so
@@ -18,12 +19,9 @@ __pycache__/
 *.pyc
 
 # 表库输出（大二进制）
-data/tb/*.bin
-data/tb_test/
-data/tb_test/*.bin
-
-# Keep directory structure
-!data/tb/.gitkeep
+# 注意：目录级模式 data/ 会把 data/.gitkeep 一并吞掉，改用 data/* 逐个忽略
+data/*
+!data/.gitkeep
 
 # 求解日志
 solve_log_*.log

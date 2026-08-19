@@ -1,5 +1,6 @@
 #include "solver_retro.h"
 #include "solver.h"  // MOVE_TABLE
+#include "platform.h"
 
 #include <algorithm>
 #include <array>
@@ -8,29 +9,10 @@
 #include <cstring>
 #include <iostream>
 #include <mutex>
-#include <sys/mman.h>
 #include <thread>
 #include <vector>
 
 namespace wolves {
-
-// ============================================================
-// 原子辅助（mmap 内存上的 uint8 原子操作）
-// ============================================================
-
-static inline uint8_t atomic_load_u8(const uint8_t* p) {
-    return __atomic_load_n(p, __ATOMIC_RELAXED);
-}
-
-static inline bool atomic_cas_u8(uint8_t* p, uint8_t expected, uint8_t desired) {
-    uint8_t e = expected;
-    return __atomic_compare_exchange_n(p, &e, desired, false,
-                                       __ATOMIC_RELAXED, __ATOMIC_RELAXED);
-}
-
-static inline uint8_t atomic_fetch_sub_u8(uint8_t* p, uint8_t v) {
-    return __atomic_fetch_sub(p, v, __ATOMIC_RELAXED);
-}
 
 // 距离上限（表库 distance 字段为 6 bit，0..63）
 static constexpr int MAX_DIST = 63;
@@ -135,23 +117,19 @@ RetroMoveTable RETRO_MOVE_TABLE;
 bool RetrogradeSolver::alloc_counters(uint64_t size) {
     free_counters();
     counters_size_ = size;
-    // 匿名 mmap：由操作系统按需零填充，无需 memset
-    counters_ = static_cast<uint8_t*>(
-        ::mmap(nullptr, size, PROT_READ | PROT_WRITE,
-               MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
-    if (counters_ == MAP_FAILED) {
-        perror("mmap counters");
+    // 匿名大块内存：由操作系统按需零填充，无需 memset
+    counters_ = static_cast<uint8_t*>(os_alloc_zeroed(size));
+    if (!counters_) {
+        std::cerr << "os_alloc_zeroed counters(" << size << ") failed\n";
         counters_ = nullptr;
         counters_size_ = 0;
         return false;
     }
     loss_dists_size_ = size;
-    loss_dists_ = static_cast<uint8_t*>(
-        ::mmap(nullptr, size, PROT_READ | PROT_WRITE,
-               MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
-    if (loss_dists_ == MAP_FAILED) {
-        perror("mmap loss_dists");
-        ::munmap(counters_, counters_size_);
+    loss_dists_ = static_cast<uint8_t*>(os_alloc_zeroed(size));
+    if (!loss_dists_) {
+        std::cerr << "os_alloc_zeroed loss_dists(" << size << ") failed\n";
+        os_free(counters_, counters_size_);
         counters_ = nullptr;
         counters_size_ = 0;
         loss_dists_ = nullptr;
@@ -163,12 +141,12 @@ bool RetrogradeSolver::alloc_counters(uint64_t size) {
 
 void RetrogradeSolver::free_counters() {
     if (loss_dists_) {
-        ::munmap(loss_dists_, loss_dists_size_);
+        os_free(loss_dists_, loss_dists_size_);
         loss_dists_ = nullptr;
         loss_dists_size_ = 0;
     }
     if (counters_) {
-        ::munmap(counters_, counters_size_);
+        os_free(counters_, counters_size_);
         counters_ = nullptr;
         counters_size_ = 0;
     }
