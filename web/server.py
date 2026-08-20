@@ -1,20 +1,23 @@
 #!/usr/bin/env python3
 """web/server.py — 狼羊棋 · 网页版后端（纯 Python 标准库，无第三方依赖）
 
-- POST /api：choose / move / advance / undo / switch / restart / endless / mode / model_move / state
+- POST /api：choose / move / advance / undo / switch / restart / endless / mode / free / model_move / state
 - 自动存档：对局结束或手动重开时，自动把对局记录落盘到 data/saved_games/game_*.json
   （JSON 含每步走子、吃子与走完后的表库最优解结论，便于回放分析）。
 - 无尽模式（endless）：勾选后解除 150 步上限，超过后仍继续对局，
   最优解提示与对局记录不受影响（表库结论只依赖局面，与步数无关）。
 - 手动模式（mode/manual_move）：开 → 模型不自动应手，右侧给出推荐最优解，
   由玩家点选一条替模型走棋；关（默认）→ 模型自动应手。
+- 自动/手动模式下，轮到模型走棋时**都可以**点右侧候选最优解替模型走棋
+  （自动模式下点选即覆盖即将执行的自动应手），玩家自己点棋子走棋两种模式不变。
 - 模型选步（防 5 次重复判和）：只在表库最优档选步（必胜最快/必败拖延/和棋），
   同档内优先选不会回到已出现局面的走法（防来回走），剩余等价走法随机挑一个。
 - 交互节奏：玩家走子后服务端**不立即让模型应手**（响应里 model_to_move=true），
   网页端等待 1 秒后再调 advance，模型才走子（符合“玩家行棋后隔一秒再由模型走棋”）。
 - 每步响应包含：
-    analysis   —— 当前回合方的多条候选最优续着（表库结论，Top-N）
-    log        —— 对局记录：每一步(玩家/模型)的走子 + 走完后局面的最优解结论
+    analysis   —— 当前回合方的全部候选最优续着（表库结论，不截断展示）
+    log        —— 对局记录：每一步(玩家/模型)的走子 + 走完后局面的最优解结论；
+                 by 标记来源：ai=模型自动应手(最优解) / opt=玩家代走且属最优解 / self=玩家自选
     legal      —— 当前回合方全部合法走法（网页点选高亮用）
     verdict    —— 当前局面最优解（狼胜/羊胜/和棋 + 最快步数）
 - 引擎逻辑：全部走子决策都基于硬解表库（纯规则逆推，k=4..15 已全部解出，
@@ -232,6 +235,7 @@ class Session:
         self.player_side = None  # None = 尚未选择执棋方
         self.endless = False     # 无尽模式：勾选后解除 150 步上限，超过仍继续提示/记录
         self.manual = False      # 手动模式：模型给出最优解，由玩家点选替模型走棋
+        self.free = False        # 自由移动（摆子）：狼任意跳/跳吃任意羊、羊任意空地，无步数；不提供最优解
         self.game = self._new_game()
         self.history = [game_to_fen(self.game)]
         self.log = []            # 对局记录（每步一行，含走完后局面的最优解结论）
@@ -245,8 +249,11 @@ class Session:
         self._pick_cache = None     # 同一局面内模型选步缓存（(fen, choice)）
 
     def _new_game(self) -> GameState:
-        """按当前无尽模式开关新建一局（官方规则含 5 次重复判和；无尽 → 不设步数上限）。"""
-        return GameState(idle_limit=IDLE_LIMIT, max_moves=None if self.endless else 150)
+        """新建一局（官方规则含 5 次重复判和；无尽/自由移动 → 不设步数上限）。"""
+        g = GameState(idle_limit=None if self.free else IDLE_LIMIT,
+                      max_moves=None if (self.endless or self.free) else 150)
+        g.free_moves = self.free
+        return g
 
     @staticmethod
     def _pos_key(game: GameState):
@@ -292,6 +299,7 @@ class Session:
                             "sheep" if self.player_side == SHEEP else None),
             "endless": self.endless,
             "manual": self.manual,
+            "free": self.free,
             "result": result,
             "reason": reason,
             "move_count": g.move_count,
@@ -387,8 +395,42 @@ class Session:
             return None, None, f"硬解表库 k={self.game.sheep_count} 未求解"
         return choice["from"], choice["to"], f"硬解表库 k={self.game.sheep_count} 最优解"
 
+    def is_optimal_move(self, fr: int, to: int) -> bool:
+        """该走法 (fr,to) 是否属于当前局面下当前回合方的“最优解档”。
+
+        （用于日志标记：玩家帮模型走棋时，走的是最优解还是自选棋。与
+        _model_choice 的最优档判定一致：必胜取最快 / 和棋取和 / 必败拖延最久。）
+        """
+        g = self.game
+        my_win = hsf.WOLF_WIN if g.turn == WOLF else hsf.SHEEP_WIN
+        cands = []
+        for r in range(5):
+            for c in range(5):
+                if g.board[r][c] != g.turn:
+                    continue
+                for mv in g.legal_moves_from((r, c)):
+                    trial = copy.deepcopy(g)
+                    if not trial.move((r, c), mv.destination):
+                        continue
+                    known, result, dist = self.tb.lookup(trial)
+                    if not known:
+                        continue
+                    rank = 2 if result == my_win else (1 if result == hsf.DRAW else 0)
+                    cands.append((rank, dist, (r * 5 + c, mv.destination[0] * 5 + mv.destination[1])))
+        if not cands:
+            return False
+        best_rank = max(c[0] for c in cands)
+        target = (fr, to)
+        if not any(c[2] == target for c in cands):
+            return False
+        if best_rank == 1:                     # 和棋档：任何和棋走法都算最优解
+            return any(c[0] == 1 and c[2] == target for c in cands)
+        best_dist = (min if best_rank == 2 else max)(
+            c[1] for c in cands if c[0] == best_rank)
+        return any(c[0] == best_rank and c[1] == best_dist and c[2] == target for c in cands)
+
     # ---------- 走子 ----------
-    def _push_log(self, side, r1, c1, r2, c2, captured_idx):
+    def _push_log(self, side, r1, c1, r2, c2, captured_idx, by=None):
         self.log.append({
             "n": self.game.move_count,
             "side": side,
@@ -396,6 +438,7 @@ class Session:
             "from": r1 * 5 + c1,
             "to": r2 * 5 + c2,
             "captured": captured_idx,
+            "by": by,     # ai=模型自动应手(最优解) / opt=玩家代走且属最优解 / self=玩家自选
             "chip": self._chip(),
             "fen": game_to_fen(self.game),
         })
@@ -416,7 +459,7 @@ class Session:
         self.model_move = ((r1, c1), (r2, c2))
         self.model_capture = captured
         self.model_note = note
-        self._push_log(side, r1, c1, r2, c2, captured)
+        self._push_log(side, r1, c1, r2, c2, captured, by="ai")
         self.history.append(game_to_fen(self.game))
         self._seen.add(self._pos_key(self.game))
         self._pick_cache = None
@@ -424,8 +467,8 @@ class Session:
         return True
 
     def advance(self):
-        """网页端隔 1 秒后调用：让模型完成应手（手动模式下不做自动应手）。"""
-        if self.manual:
+        """网页端隔 1 秒后调用：让模型完成应手（手动/自由移动模式下不做自动应手）。"""
+        if self.manual or self.free:
             return
         if (self.model_pending and self.game.winner is None
                 and self.game.turn != self.player_side):
@@ -453,19 +496,27 @@ class Session:
     def move(self, fr, to):
         if self.game.winner is not None:
             return False, "对局已结束"
-        if self.game.turn != self.player_side:
+        # 自由移动模式：任何一方棋子都可被直接点选移动，不受回合限制
+        if not self.free and self.game.turn != self.player_side:
             return False, "还没轮到你的回合"
         fr_c = (fr // 5, fr % 5)
         to_c = (to // 5, to % 5)
-        side = "wolf" if self.game.turn == WOLF else "sheep"
+        side = self.game.board[fr_c[0]][fr_c[1]]
+        if side is None:
+            return False, "非法走法"
+        if self.free:
+            self.game.turn = side       # 自由摆子：临时轮到被走子所属方
+        side_str = "wolf" if side == WOLF else "sheep"
         sheep_before = self.game.sheep_count
         if not self.game.move(fr_c, to_c):
             return False, "非法走法"
         captured = (to_c[0] * 5 + to_c[1]) if self.game.sheep_count < sheep_before else None
+        if self.free:
+            self.game.turn = side       # 保持走子方（自由模式下回合仅作显示）
         self.model_move = None
         self.model_capture = None
         self.model_note = ""
-        self._push_log(side, fr_c[0], fr_c[1], to_c[0], to_c[1], captured)
+        self._push_log(side_str, fr_c[0], fr_c[1], to_c[0], to_c[1], captured)
         self.history.append(game_to_fen(self.game))   # 与 step_model 对齐：每走一步记一条
         self._seen.add(self._pos_key(self.game))
         self.model_pending = True
@@ -478,6 +529,7 @@ class Session:
         max_moves = self.game.max_moves
         idle_limit = self.game.idle_limit
         self.game = game_from_fen(self.history[-1], max_moves=max_moves, idle_limit=idle_limit)
+        self.game.free_moves = self.free   # 自由移动模式重建局面后恢复变体开关
         # 对局记录按“步数序”截断：每步恰好一条日志、一条 history FEN，严格对齐，
         # 不再按 FEN 集合匹配（同局面复现/玩家行棋不入 history 会导致误删整段记录）。
         self.log = self.log[:len(self.history) - 1]
@@ -504,7 +556,7 @@ class Session:
         """开/关无尽模式：解除 150 步上限；若已因 150 步判和，解除终局继续下；
         若已超过 150 步后关掉无尽模式，立即按 150 步上限判和。"""
         self.endless = bool(on)
-        self.game.max_moves = None if self.endless else 150
+        self.game.max_moves = None if (self.endless or self.free) else 150
         if on and self.game.winner == DRAW:
             self.game.winner = None
             self.model_pending = True
@@ -518,25 +570,53 @@ class Session:
         self._pick_cache = None
         return True, None
 
+    def set_free(self, on: bool):
+        """开/关自由移动（摆子）模式。
+
+        开启：狼可跳到任意位置或任意羊格跳吃、羊可移动到任意空地，无步数限制，
+        玩家可直接点选**双方任意棋子**快速摆放/调整残局；该模式**不提供最优解更新**
+        （表库按标准规则求解，不适用该变体），并暂停模型自动应手，避免破坏摆好的
+        局面。关闭后立即按当前局面恢复标准规则与最优解提示。
+        """
+        self.free = bool(on)
+        self.game.free_moves = on
+        self.game.idle_limit = None if on else IDLE_LIMIT
+        self.game.max_moves = None if (on or self.endless) else 150
+        self._pick_cache = None
+        return True, None
+
     def model_move_cmd(self, fr, to):
-        """手动模式：玩家从模型推荐走法中选一步 (fr,to)，替模型执行。"""
-        if not self.manual:
-            return False, "当前是自动模式，模型会自动走棋"
+        """玩家点选/棋盘点击替模型走棋（自动/手动模式均可；自动模式下点选即覆盖自动应手）。
+
+        自由移动模式下：无论轮到哪方都可点选任意棋子自由走（同 move）。
+        日志标记 by：所走棋属于当前局面“最优解档”→ opt（按最优解标记），
+        否则 → self（玩家自选）；模型自动应手另标 ai；自由移动模式不标注。
+        """
         if self.game.winner is not None:
             return False, "对局已结束"
-        if self.game.turn == self.player_side:
+        if not self.free and self.game.turn == self.player_side:
             return False, "现在轮到你走棋"
         fr_c = (fr // 5, fr % 5)
         to_c = (to // 5, to % 5)
-        side = "wolf" if self.game.turn == WOLF else "sheep"
+        side = self.game.board[fr_c[0]][fr_c[1]]
+        if side is None:
+            return False, "非法走法"
+        if self.free:
+            self.game.turn = side       # 自由摆子：临时轮到被走子所属方
+        side_str = "wolf" if side == WOLF else "sheep"
+        is_best = False if self.free else self.is_optimal_move(fr, to)
         sheep_before = self.game.sheep_count
         if not self.game.move(fr_c, to_c):
             return False, "非法走法"
         captured = (to_c[0] * 5 + to_c[1]) if self.game.sheep_count < sheep_before else None
+        if self.free:
+            self.game.turn = side       # 保持走子方（自由模式下回合仅作显示）
         self.model_move = (fr_c, to_c)
         self.model_capture = captured
-        self.model_note = "手动模式·点选代走"
-        self._push_log(side, fr_c[0], fr_c[1], to_c[0], to_c[1], captured)
+        self.model_note = ("自由移动·自由走" if self.free else
+                           ("点选最优解代走" if is_best else "玩家自选走棋"))
+        self._push_log(side_str, fr_c[0], fr_c[1], to_c[0], to_c[1], captured,
+                       by=None if self.free else ("opt" if is_best else "self"))
         self.history.append(game_to_fen(self.game))
         self._seen.add(self._pos_key(self.game))
         self._pick_cache = None
@@ -561,7 +641,9 @@ class Session:
 
     # ---------- 分析 ----------
     def _chip(self) -> str:
-        """当前局面的结论（用于对局记录里每步后的最优解 chip）。"""
+        """当前局面的结论（用于对局记录里每步后的结论 chip；自由移动模式不读表库）。"""
+        if self.free:
+            return "自由移动"
         g = self.game
         if g.winner == WOLF:
             return "狼胜·终局"
@@ -579,22 +661,28 @@ class Session:
     def legal_list(self) -> list:
         out = []
         g = self.game
-        for r in range(5):
-            for c in range(5):
-                if g.board[r][c] != g.turn:
-                    continue
-                for mv in g.legal_moves_from((r, c)):
-                    out.append({
-                        "from": r * 5 + c,
-                        "to": mv.destination[0] * 5 + mv.destination[1],
-                        "captured": (mv.captured[0] * 5 + mv.captured[1]) if mv.captured else None,
-                    })
+        # 自由移动模式：列出双方全部合法走法（供自由摆子高亮），否则只列当前回合方
+        sides = (WOLF, SHEEP) if self.free else (g.turn,)
+        for side in sides:
+            for r in range(5):
+                for c in range(5):
+                    if g.board[r][c] != side:
+                        continue
+                    moves = (g.legal_free_moves_from((r, c)) if self.free
+                             else g.legal_moves_from((r, c)))
+                    for mv in moves:
+                        out.append({
+                            "from": r * 5 + c,
+                            "to": mv.destination[0] * 5 + mv.destination[1],
+                            "captured": (mv.captured[0] * 5 + mv.captured[1]) if mv.captured else None,
+                            "side": "wolf" if side == WOLF else "sheep",
+                        })
         return out
 
-    def analysis(self, limit: int = 10):
-        """当前回合方的候选最优续着（推给网页右侧“多条最优解”面板，默认 10 条）。
+    def analysis(self, limit: int | None = None):
+        """当前回合方的全部候选最优续着（推给网页右侧“最优解”面板；limit=None 不截断）。
 
-        展示池 = 全部合法走法（对模型有利/不利的都列出）；
+        展示池 = 全部合法走法（对模型有利/不利的都列出），不再截断前 10 条；
         排序：对当前回合方有利 → 步数最少者优先；其次和棋；最后不利方（拖得越久越优先）。
         轮到模型走时，用 choose_model 的同一套规则挑选“对它有利且最快步数最少”的一步
         （全部来自表库最优解），并在对应行打 exec 标记。
@@ -628,7 +716,7 @@ class Session:
             sec = -dist if rank == 2 else (dist if rank == 0 else 0)
             scored.append((rank, sec, dict(m, label=move_label(result, dist))))
         scored.sort(key=lambda x: (x[0], x[1]), reverse=True)
-        rows = [s[2] for s in scored[:limit]]
+        rows = [s[2] for s in scored] if limit is None else [s[2] for s in scored[:limit]]
         if rows and exec_from is not None:
             for r in rows:
                 if r["from"] == exec_from and r["to"] == exec_to:
@@ -643,12 +731,16 @@ class Session:
         if g.winner is not None and not self.record_saved:
             self.save_record()
         board = [g.board[i // 5][i % 5] for i in range(25)]
-        verdict = {"known": False, "label": ""}
-        known, result, dist = self.tb.lookup(g)
-        if known:
-            verdict = {"known": True, "label": move_label(result, dist)}
+        # 自由移动模式：不提供最优解更新（表库按标准规则求解，不适用该变体）
+        if self.free:
+            verdict = {"known": False, "label": "自由移动模式"}
         else:
-            verdict = {"known": False, "label": f"表库 k={g.sheep_count} 未求解"}
+            verdict = {"known": False, "label": ""}
+            known, result, dist = self.tb.lookup(g)
+            if known:
+                verdict = {"known": True, "label": move_label(result, dist)}
+            else:
+                verdict = {"known": False, "label": f"表库 k={g.sheep_count} 未求解"}
         terminal = None
         if g.winner == WOLF:
             terminal = {"result": "狼胜", "reason": "羊被吃到不足 4 只"}
@@ -663,13 +755,14 @@ class Session:
                             "sheep" if self.player_side == SHEEP else None),
             "endless": self.endless,
             "manual": self.manual,
+            "free": self.free,
             "record_saved": self.record_saved,
             "last_saved": self.last_saved,
             "saved_count": self.saved_count(),
             "sheep": g.sheep_count,
             "move_count": g.move_count,
             "phase": self.phase(),
-            "model_to_move": (self.player_side is not None and
+            "model_to_move": (not self.free and self.player_side is not None and
                               g.turn != self.player_side and g.winner is None),
             "model_pending": self.model_pending,
             "model_move": ({"from": self.model_move[0][0] * 5 + self.model_move[0][1],
@@ -680,7 +773,7 @@ class Session:
             "verdict": verdict,
             "terminal": terminal,
             "legal": self.legal_list(),
-            "analysis": self.analysis(),
+            "analysis": None if self.free else self.analysis(),
             "log": self.log,
             "history_len": len(self.history),
         }
@@ -755,6 +848,11 @@ class Handler(BaseHTTPRequestHandler):
                     return
             elif cmd == "mode":
                 ok, err = session.set_manual(bool(data.get("manual", False)))
+                if not ok:
+                    self._send(200, json.dumps({"ok": False, "error": err}).encode())
+                    return
+            elif cmd == "free":
+                ok, err = session.set_free(bool(data.get("on", False)))
                 if not ok:
                     self._send(200, json.dumps({"ok": False, "error": err}).encode())
                     return

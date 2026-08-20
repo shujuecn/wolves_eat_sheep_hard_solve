@@ -192,11 +192,56 @@ ok, err = s4.model_move_cmd(13, 18)   # 羊 (2,3)->(3,3)
 check("代走成功", ok and s4.game.move_count == 2, err)
 check("代走记录正确", s4.log[-1]["side"] == "sheep" and s4.log[-1]["n"] == 2
       and s4.log[-1]["me"] is False)
-# 切回自动模式后,代走被拒
+# 切回自动模式后，点选候选代走仍可用（相当于覆盖这次自动应手）
 ok, err = s4.set_manual(False)
 assert ok, err
+ok, err = s4.move(16, 21)                 # 玩家狼回位 → 轮到羊(模型)
+assert ok, err
 ok, err = s4.model_move_cmd(18, 13)
-check("自动模式拒绝代走", not ok and "自动模式" in err, err)
+check("自动模式可点选代走", ok and s4.game.move_count == 4 and s4.model_pending is False, err)
+
+# ============ 4b. 手动模式：棋盘代走 + 日志最优解/玩家自选标记 ============
+print("[4b] 手动模式棋盘代走 + 日志标记")
+s6 = srv.Session(tb)
+s6.choose_side("wolf")
+ok, _ = s6.set_manual(True)
+ok, err = s6.move(21, 16)          # 玩家狼走一步 → 轮到羊(模型)
+assert ok, err
+
+
+def sheep_moves(s):
+    out = []
+    for r in range(5):
+        for c in range(5):
+            if s.game.board[r][c] == srv.SHEEP:
+                for mv in s.game.legal_moves_from((r, c)):
+                    out.append((r * 5 + c, mv.destination[0] * 5 + mv.destination[1]))
+    return out
+
+
+opts = [m for m in sheep_moves(s6) if s6.is_optimal_move(*m)]
+nopts = [m for m in sheep_moves(s6) if not s6.is_optimal_move(*m)]
+check("存在最优档与非最优档", bool(opts) and bool(nopts), f"opt={len(opts)} nopt={len(nopts)}")
+# 玩家在棋盘上点选模型(羊)子走一步最优解 → 日志按最优解标记 by=opt
+ok, err = s6.model_move_cmd(*opts[0])
+check("棋盘代走(最优档)成功", ok and s6.game.move_count == 2, err)
+check("最优档代走标记 by=opt", s6.log[-1]["by"] == "opt" and s6.log[-1]["me"] is False,
+      f"by={s6.log[-1].get('by')}")
+# 玩家回一步 → 轮到模型；走一步非最优解 → 日志标记 by=self（玩家自选）
+ok, _ = s6.move(16, 21)
+nopts = [m for m in sheep_moves(s6) if not s6.is_optimal_move(*m)]
+if nopts:
+    ok, err = s6.model_move_cmd(*nopts[0])
+    check("棋盘代走(非最优档)成功", ok and s6.game.move_count == 4, err)
+    check("非最优档代走标记 by=self", s6.log[-1]["by"] == "self", f"by={s6.log[-1].get('by')}")
+else:
+    check("棋盘代走(非最优档)成功", True)   # 该局面无非最优档走法，跳过
+# 模型自动应手 → 日志标记 by=ai
+s7 = srv.Session(tb)
+s7.choose_side("sheep")            # 模型(狼)先行
+s7.advance()
+check("模型自动应手标记 by=ai", bool(s7.log) and s7.log[-1]["by"] == "ai",
+      f"by={s7.log[-1].get('by') if s7.log else None}")
 
 # ============ 5. 相同局面 5 次判和（规则生效 + 存档原因正确） ============
 print("[5] 相同局面 5 次判和")
@@ -331,6 +376,59 @@ for _ in range(8):
         results["rep_draw" if "相同局面" in reason else "150_draw"] += 1
 check("模型狼 ≥6/8 局取胜", results["wolf_win"] >= 6, str(results))
 check("无一局因重复判和", results["rep_draw"] == 0, str(results))
+
+# ============ 7b. 自由移动（摆子）模式 ============
+print("[7b] 自由移动（摆子）模式")
+
+
+def free_moves_of(ses, cell):
+    """自由模式下 (r,c) 棋子的全部自由走法目标（含侧信息）。"""
+    return [m for m in ses.snapshot()["legal"] if m["from"] == cell]
+
+
+s9 = srv.Session(tb)
+s9.choose_side("wolf")
+ok, err = s9.set_free(True)
+assert ok, err
+snap = s9.snapshot()
+check("快照带 free 标记", snap["free"] is True)
+check("开启后不提供最优解", snap["analysis"] is None and snap["verdict"]["label"] == "自由移动模式")
+check("开启后不出现模型回合", snap["model_to_move"] is False)
+s9.advance()
+check("开启后模型不自动应手", s9.game.move_count == 0)
+# 羊(2,0) 可自由移动到任意空地（如 (4,4)），不受回合限制
+ok, err = s9.move(10, 24)          # 羊 (2,0)→(4,4) 任意空地
+check("可自由移动对方羊到任意空地", ok and s9.game.board[4][4] == srv.SHEEP, err)
+check("走后回合显示为羊方", s9.game.turn == srv.SHEEP)
+# 狼(4,1) 自由跳到任意羊格吃羊（如 (2,2)）
+ok, err = s9.move(21, 12)          # 狼 (4,1)→(2,2) 跳吃该羊
+check("狼自由跳吃任意羊", ok and s9.game.board[2][2] == srv.WOLF
+      and s9.game.sheep_count == 14, err)
+# 狼再自由跳到任意空格（如 (0,0)）
+ok, err = s9.move(12, 0)
+check("狼自由移动到任意位置", ok and s9.game.board[0][0] == srv.WOLF, err)
+# 非法：羊不能落到有子格、狼不能落狼格
+ok, _ = s9.move(4, 13)             # 羊(4,4)→(3,3)（有狼）应失败
+check("羊不能进有子格", not ok)
+ok, _ = s9.move(2, 23)             # 狼(0,0)→(4,3)（有狼）应失败
+check("狼不能落狼格", not ok)
+# 开启期间 log 不标注 by、chip 为自由移动
+check("自由模式日志不带 by 标记", all("by" not in e or e.get("by") is None for e in s9.log),
+      str(s9.log[:1]))
+check("自由模式 chip 为自由移动", s9.log and s9.log[0]["chip"] == "自由移动",
+      str(s9.log[0]["chip"] if s9.log else ""))
+# 关闭后按当前局面恢复最优解
+ok, err = s9.set_free(False)
+assert ok, err
+snap = s9.snapshot()
+check("关闭后恢复最优解", snap["free"] is False and snap["analysis"] is not None
+      and snap["verdict"]["known"] is True)
+check("关闭后步数上限恢复", s9.game.max_moves == 150 and s9.game.free_moves is False)
+# 悔棋后 free_moves 变体开关保持（由 Session.free 驱动）
+if len(s9.history) > 2:
+    s9.set_free(True)
+    ok0, _ = s9.undo()
+    check("自由模式悔棋后变体保持", ok0 and s9.game.free_moves is True)
 
 # ============ 8. 存档目录可写且结构完整 ============
 print("[8] 存档目录")

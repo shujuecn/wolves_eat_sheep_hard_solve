@@ -31,6 +31,7 @@ class GameState:
     ) -> None:
         self.idle_limit = idle_limit
         self.max_moves = max_moves
+        self.free_moves = False   # 自由移动模式：狼可跳任意位置/任意羊、羊可到任意空地（无步数限制）
         self.reset()
 
     def reset(self) -> None:
@@ -92,6 +93,25 @@ class GameState:
                 and self.board[prey_row][prey_col] == SHEEP
             ):
                 moves.append(Move((prey_row, prey_col), (prey_row, prey_col)))
+        return moves
+
+    def legal_free_moves_from(self, position: tuple[int, int]) -> list[Move]:
+        """自由移动模式（摆子）：狼可跳到任意空格，或直接跳到任意羊格吃掉；
+        羊可移动到任意空格。不受步长/路径限制，也不受回合限制（供 Session 摆残局用）。"""
+        row, col = position
+        piece = self.board[row][col]
+        if piece is None:
+            return []
+        moves: list[Move] = []
+        for r in range(BOARD_SIZE):
+            for c in range(BOARD_SIZE):
+                if (r, c) == (row, col):
+                    continue
+                target = self.board[r][c]
+                if piece == WOLF and target == SHEEP:
+                    moves.append(Move((r, c), (r, c)))   # 跳到羊格即吃掉该羊
+                elif target is None:
+                    moves.append(Move((r, c)))
         return moves
 
     def wolf_capture_targets(self) -> set[tuple[int, int]]:
@@ -161,10 +181,15 @@ class GameState:
         if self.winner or self.board[start[0]][start[1]] != self.turn:
             return False
 
+        candidates = (
+            self.legal_free_moves_from(start)
+            if self.free_moves
+            else self.legal_moves_from(start)
+        )
         move = next(
             (
                 candidate
-                for candidate in self.legal_moves_from(start)
+                for candidate in candidates
                 if candidate.destination == destination
             ),
             None,

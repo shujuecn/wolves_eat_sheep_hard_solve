@@ -34,6 +34,7 @@
     background:linear-gradient(150deg,#8a6a42,#6a4c2c);
     border:6px solid #4a3520;border-radius:12px;padding:8px;
     box-shadow:0 10px 30px rgba(0,0,0,.5);
+    user-select:none;-webkit-user-select:none;
   }
   #board.flip{transform:rotate(180deg)}
   #board.flip .col-label,#board.flip .row-label{transform:rotate(180deg)}
@@ -56,6 +57,7 @@
     font-size:clamp(24px,5.4vh,58px);line-height:1;
     box-shadow:0 3px 6px rgba(0,0,0,.45),inset 0 0 0 2px rgba(0,0,0,.14);
     transition:transform .08s;
+    user-select:none;-webkit-user-select:none;
   }
   .p.wolf{background:radial-gradient(circle at 35% 30%,#fdf3e3,#e7cfa9);color:var(--red)}
   .p.sheep{background:radial-gradient(circle at 35% 30%,#fff,#e5e5da);color:#1d1d1d}
@@ -67,6 +69,12 @@
   .cell.target.empty::after{content:"";position:absolute;width:28%;height:28%;border-radius:50%;background:rgba(124,224,124,.85);box-shadow:0 0 10px var(--green)}
   .cell.model-to .p{box-shadow:0 0 0 4px var(--blue),0 0 16px 2px rgba(74,144,255,.6)}
   .cell.model-from::after{content:"×";position:absolute;font-size:clamp(24px,4.6vh,46px);font-weight:900;color:#ff7777;text-shadow:0 0 6px #000;line-height:1}
+  /* 手动/自动模式：悬浮候选行 → 棋盘上预览这步棋的路径（起子/落点/被吃子，静态简单标记） */
+  .cell.hover-from .p{box-shadow:0 0 0 4px var(--gold),0 0 16px 3px rgba(242,193,78,.55),0 3px 6px rgba(0,0,0,.45)}
+  .cell.hover-from::after{content:"";position:absolute;width:82%;height:82%;border-radius:50%;border:2.5px dashed rgba(242,193,78,.85);pointer-events:none}
+  .cell.hover-to .p{box-shadow:0 0 0 3px var(--green),0 0 16px 3px rgba(124,224,124,.65)}
+  .cell.hover-to.empty::after{content:"";position:absolute;width:28%;height:28%;border-radius:50%;background:rgba(124,224,124,.95);box-shadow:0 0 12px var(--green)}
+  .cell.hover-cap .p{box-shadow:0 0 0 4px var(--red),0 0 14px 3px rgba(194,43,43,.6),0 3px 6px rgba(0,0,0,.45)}
   #sidecard{
     position:absolute;inset:0;border-radius:12px;background:rgba(18,10,4,.6);
     display:none;flex-direction:column;align-items:center;justify-content:center;gap:20px;z-index:3;
@@ -84,12 +92,12 @@
   #ctl button:hover{filter:brightness(1.15)}
   #ctl button:disabled{filter:grayscale(.7);cursor:not-allowed}
   #btn-mode.on{background:#3a5f9e;color:#fff;box-shadow:0 0 0 2px #9ecbff66}
-  #endless-box{display:flex;align-items:center;gap:6px;padding:7px 14px;font-size:16px;font-weight:800;
+  #endless-box,#free-box{display:flex;align-items:center;gap:6px;padding:7px 14px;font-size:16px;font-weight:800;
     background:#33503a;color:#cfe8c8;border-radius:8px;cursor:pointer;user-select:none;white-space:nowrap;
     box-shadow:0 3px 8px rgba(0,0,0,.4)}
-  #endless-box:hover{filter:brightness(1.15)}
-  #endless-box.on{background:#2d7a4a;color:#fff;box-shadow:0 0 0 2px #7ce07c66}
-  #endless-box input{width:18px;height:18px;cursor:pointer;accent-color:#8ce07c;margin:0}
+  #endless-box:hover,#free-box:hover{filter:brightness(1.15)}
+  #endless-box.on,#free-box.on{background:#2d7a4a;color:#fff;box-shadow:0 0 0 2px #7ce07c66}
+  #endless-box input,#free-box input{width:18px;height:18px;cursor:pointer;accent-color:#8ce07c;margin:0}
   #error{position:absolute;left:12%;right:12%;bottom:10px;text-align:center;color:#ffd9d9;font-size:17px;font-weight:800;
     background:rgba(130,25,25,.9);border-radius:8px;padding:4px 10px;min-height:20px;pointer-events:none;z-index:4}
   #error:empty{display:none}
@@ -99,13 +107,14 @@
   #analysis{background:rgba(0,0,0,.35);border-radius:10px;padding:12px 14px}
   #an-head{font-size:19px;font-weight:900;margin-bottom:4px}
   #an-verdict{font-size:26px;font-weight:900;margin-bottom:10px}
-  #an-list{display:flex;flex-direction:column;gap:4px}
+  #an-list{display:flex;flex-direction:column;gap:4px;max-height:min(36vh,380px);overflow-y:auto;overflow-x:hidden;padding-right:2px;scrollbar-width:none}
+  #an-list::-webkit-scrollbar{display:none;width:0;height:0}
   .an-row{display:flex;align-items:center;gap:12px;padding:6px 12px;border-radius:8px;background:rgba(255,255,255,.06);font-size:19px}
   .an-row.fav{background:rgba(70,180,100,.16)}
   .an-row.bad{background:rgba(220,80,80,.13)}
   .an-row.exec{outline:2px solid var(--gold);outline-offset:-2px}
   .an-row.pick-row{cursor:pointer}
-  .an-row.pick-row:hover{background:rgba(124,224,124,.22);transform:scale(1.01)}
+  .an-row.pick-row:hover{background:rgba(124,224,124,.10);box-shadow:inset 3px 0 0 var(--green)}
   .an-row.rec{outline:2px solid var(--green);outline-offset:-2px}
   .an-row .rn{font-weight:900;color:var(--gold);width:26px;flex:0 0 auto}
   .an-row .mv{font-weight:800;letter-spacing:1px}
@@ -113,9 +122,10 @@
   .an-row .cv{color:#9ecbff;margin-left:auto;white-space:nowrap}
   .an-row .exec-tag{color:#1c1006;background:var(--gold);font-size:14px;font-weight:900;padding:1px 8px;border-radius:10px}
   #log{flex:1;min-height:0;background:rgba(0,0,0,.35);border-radius:10px;padding:12px 14px;display:flex;flex-direction:column}
-  #log-head{font-size:19px;font-weight:900;margin-bottom:6px}
-  #log-saved{margin-left:10px;font-size:14px;font-weight:700;color:#a8d8a0;white-space:nowrap}
-  #log-list{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:2px}
+  #log-head{font-size:19px;font-weight:900;margin-bottom:6px;display:flex;align-items:center}
+  #log-saved{margin-left:10px;font-size:17px;font-weight:800;color:#a8d8a0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+  #log-list{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:2px;scrollbar-width:none}
+  #log-list::-webkit-scrollbar{display:none;width:0;height:0}
   .lg-row{display:flex;align-items:center;gap:10px;padding:5px 10px;border-radius:6px;font-size:18px;white-space:nowrap}
   .lg-row:nth-child(odd){background:rgba(255,255,255,.05)}
   .lg-row .n{color:#c9b393;width:36px;flex:0 0 auto}
@@ -127,6 +137,9 @@
   .lg-row .by{margin-left:auto;font-size:16px;font-weight:900}
   .lg-row .by.you{color:var(--gold)}
   .lg-row .by.ai{color:var(--blue)}
+  .lg-row .tag{font-size:13px;font-weight:800;padding:1px 8px;border-radius:10px;flex:0 0 auto}
+  .lg-row .tag.best{color:#1c1006;background:var(--gold)}
+  .lg-row .tag.self{color:#ffd9b0;background:rgba(255,150,60,.22);border:1px solid rgba(255,170,90,.45)}
   .lg-row .chip{font-size:16px;font-weight:800;color:#ffe9c4;background:rgba(0,0,0,.4);padding:1px 10px;border-radius:10px;flex:0 0 auto}
 </style>
 </head>
@@ -148,12 +161,15 @@
       <div id="error"></div>
     </div>
     <div id="ctl">
-      <button id="btn-undo">悔棋 (u)</button>
-      <button id="btn-switch">换边 (s)</button>
-      <button id="btn-restart">重开 (r)</button>
+      <button id="btn-undo">悔棋</button>
+      <button id="btn-switch">换边</button>
+      <button id="btn-restart">重开</button>
       <button id="btn-mode" title="自动：模型自动应手；手动：模型给出最优解，由你点右侧推荐走法替模型走棋">自动模式</button>
       <label id="endless-box" title="勾选后解除 150 步上限，超过仍继续对局并保留最优解提示与对局记录">
         <input type="checkbox" id="chk-endless"> 无尽模式
+      </label>
+      <label id="free-box" title="自由移动（摆子）：狼可跳到任意位置或任意羊格跳吃、羊可移动到任意空地，无步数限制；期间暂停最优解提示，关闭后按当前局面恢复最优解">
+        <input type="checkbox" id="chk-free"> 自由移动
       </label>
     </div>
   </div>
@@ -173,12 +189,15 @@
 <script>
 "use strict";
 const LOG = "ABCDE";
-let state = null, selected = -1, targets = [], lastModelMove = null, busy = false, advTimer = null;
+let state = null, selected = -1, selectedSide = null, targets = [], lastModelMove = null, busy = false, advTimer = null;
+let hover = null;   // 手动模式悬浮推荐行时的路径预览 {from,to,captured}
 
 const $ = id => document.getElementById(id);
 const boardEl = $("board");
 const logList = $("log-list");
 const name = i => LOG[i % 5] + (Math.floor(i / 5) + 1);   // 逻辑坐标记法 a1..e5
+const NUM = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳";
+const numTag = i => (i < NUM.length ? NUM[i] : String(i + 1));
 
 // ---------- 棋盘骨架：只建一次，之后原地增量更新 ----------
 const cells = [];
@@ -207,12 +226,19 @@ function syncBoard() {
                         : '<span class="dot"></span>';
     if (el.innerHTML !== inner) el.innerHTML = inner;
     const cls = ["cell", ((Math.floor(i / 5) + i % 5) % 2 ? "light" : "dark")];
+    if (!piece) cls.push("empty");
     if (lastModelMove && i === lastModelMove.from) cls.push("model-from");
     if (lastModelMove && i === lastModelMove.to) cls.push("model-to");
+    if (hover && i === hover.from) cls.push("hover-from");
+    if (hover && i === hover.to) cls.push("hover-to");
+    if (hover && hover.captured != null && i === hover.captured) cls.push("hover-cap");
     if (i === selected) cls.push("selected");
     if (targets.includes(i)) cls.push("target");
     const mine = piece && (piece === "wolf") === (state.player_side === "wolf");
-    if (myTurn && mine && state.legal.some(m => m.from === i)) cls.push("pickable");
+    const modelSide = piece && !mine;
+    const hasMove = state.legal.some(m => m.from === i);
+    if (myTurn && mine && hasMove) cls.push("pickable");
+    else if (!myTurn && state.manual && modelSide && hasMove) cls.push("pickable");
     const cs = cls.join(" ");
     if (el.className !== cs) el.className = cs;
   }
@@ -247,12 +273,13 @@ function showError(msg) {
 // ---------- 状态应用 ----------
 function applyState(s, clearLine) {
   state = s;
-  selected = -1; targets = [];
+  selected = -1; selectedSide = null; targets = [];
+  hover = null;
   lastModelMove = s.model_move ? { from: s.model_move.from, to: s.model_move.to } : null;
   syncBoard();
   renderRight();
   if (advTimer) { clearTimeout(advTimer); advTimer = null; }
-  if (!s.terminal && s.model_to_move && !s.model_move && !s.manual) {
+  if (!s.terminal && s.model_to_move && !s.model_move && !s.manual && !s.free) {
     advTimer = setTimeout(async () => {
       const s2 = await api("advance");
       if (s2) applyState(s2, false);
@@ -269,45 +296,53 @@ function renderRight() {
   const you = g.player_side === "wolf" ? "狼" : "羊";
   const turnName = g.turn === "wolf" ? "狼" : "羊";
   const mine = g.turn === g.player_side;
-  const mvTxt = g.endless ? `第 ${g.move_count} 步 · 无尽模式` : `第 ${g.move_count} / 150 步`;
+  let mvTxt = g.endless ? `第 ${g.move_count} 步 · 无尽模式` : `第 ${g.move_count} / 150 步`;
+  if (g.free) mvTxt += " · 自由移动";
   let meta = "";
   if (g.terminal) {
     const won = (g.terminal.result.startsWith("狼") && g.player_side === "wolf") ||
                 (g.terminal.result.startsWith("羊") && g.player_side === "sheep");
     meta = `${mvTxt} · 终局 · <span class="${won ? "you" : "ai"}">${g.terminal.result}</span>（${g.terminal.reason}）`;
   } else {
-    const hint = g.manual && g.model_to_move
-      ? " · <span class='think'>手动模式 · 请点选推荐走法</span>"
-      : g.model_to_move ? " · <span class='think'>模型思考中…</span>" : "";
+    const hint = (!g.manual && g.model_to_move)
+      ? " · <span class='think'>模型思考中…</span>" : "";
     meta = `${mvTxt} · 羊数 ${g.sheep} · 轮到 ` +
            `<span class="${mine ? "you" : "ai"}">${turnName}${mine ? "（你）" : "（机）"}</span>` + hint;
   }
   $("meta").innerHTML = `你执 <span class="you">${you}</span> · ` + meta;
   // 局面分析
-  const engine = `表库 k=${g.sheep}`;
+  const engine = g.free ? "自由移动" : `表库 k=${g.sheep}`;
   $("an-head").textContent = (g.terminal ? "终局" : "当前局面") +
-    ` · 轮到 ${turnName}${g.player_side ? (mine ? "（你）" : "（机）") : ""} · ${engine}` +
-    (g.manual && g.model_to_move ? " · 点选一条推荐走法替模型走棋" : "");
-  $("an-verdict").textContent = "最优解：" + (g.verdict ? g.verdict.label : "");
-  $("an-verdict").style.color = (g.verdict && g.verdict.label.includes("狼胜")) ? "#ff9d9d"
-                              : (g.verdict && g.verdict.label.includes("羊胜")) ? "#9dd7ff" : "#ffe9c4";
-  if (g.analysis && g.analysis.length) {
-    const modelSide = g.player_side === "wolf" ? "sheep" : "wolf";
-    const pickable = g.manual && g.model_to_move;
+    ` · 轮到 ${turnName}${g.player_side ? (mine ? "（你）" : "（机）") : ""} · ${engine}`;
+  if (g.free) {
+    $("an-verdict").textContent = "自由移动模式 · 关闭后按当前局面恢复最优解";
+    $("an-verdict").style.color = "#cfe8c8";
+  } else {
+    $("an-verdict").textContent = "最优解：" + (g.verdict ? g.verdict.label : "");
+    $("an-verdict").style.color = (g.verdict && g.verdict.label.includes("狼胜")) ? "#ff9d9d"
+                                : (g.verdict && g.verdict.label.includes("羊胜")) ? "#9dd7ff" : "#ffe9c4";
+  }
+  if (g.free) {
+    $("an-list").innerHTML = "<div class='an-row'><span class='mv'>（自由调整：不提供最优解 · 关闭后自动恢复）</span></div>";
+  } else if (g.analysis && g.analysis.length) {
+    // 轮到模型走：候选行可点选替模型走；轮到玩家走：候选行同样可点选让自己走
+    const pickable = g.model_to_move || g.turn === g.player_side;
+    const moverSide = g.turn;   // 当前走棋方（颜色偏好按走棋方利益标注）
     $("an-list").innerHTML = g.analysis.map((a, i) => {
       const lab = a.label || "";
-      let fav = null;   // null=和棋, true=对模型有利, false=对模型不利
-      if (lab.startsWith("狼胜")) fav = modelSide === "wolf";
-      else if (lab.startsWith("羊胜")) fav = modelSide === "sheep";
+      let fav = null;   // null=和棋, true=对当前走棋方有利, false=不利
+      if (lab.startsWith("狼胜")) fav = moverSide === "wolf";
+      else if (lab.startsWith("羊胜")) fav = moverSide === "sheep";
       const cls = "an-row" + (fav === null ? "" : fav ? " fav" : " bad")
                 + (g.model_to_move && a.exec ? " exec" : "")
                 + (pickable ? " pick-row" : "")
-                + (pickable && i === 0 ? " rec" : "");
+                + (pickable && i === 0 && !a.exec ? " rec" : "");
       const tag = (g.model_to_move && a.exec)
         ? `<span class="exec-tag">模型将走</span>`
-        : (pickable && i === 0) ? `<span class="exec-tag">推荐</span>` : "";
-      const click = pickable ? ` data-from="${a.from}" data-to="${a.to}"` : "";
-      return `<div class="${cls}"${click}><span class="rn">${"①②③④⑤⑥⑦⑧⑨⑩"[i]}</span>` +
+        : (pickable && i === 0 && !a.exec) ? `<span class="exec-tag">推荐</span>` : "";
+      const click = pickable ? ` data-from="${a.from}" data-to="${a.to}"` +
+        (a.captured != null ? ` data-captured="${a.captured}"` : "") : "";
+      return `<div class="${cls}"${click}><span class="rn">${numTag(i)}</span>` +
         `<span class="mv">${name(a.from)}→${name(a.to)}</span>` +
         (a.captured != null ? `<span class="cap">吃${name(a.captured)}</span>` : "") +
         tag +
@@ -323,12 +358,17 @@ function renderRight() {
     `<span class="mv">${name(e.from)}→${name(e.to)}</span>` +
     (e.captured != null ? `<span class="cap">吃${name(e.captured)}</span>` : "") +
     `<span class="by ${e.me ? "you" : "ai"}">${e.me ? "你" : "机"}</span>` +
+    (e.by === "ai" || e.by === "opt" ? `<span class="tag best">最优解</span>`
+     : e.by === "self" ? `<span class="tag self">玩家自选</span>` : "") +
     `<span class="chip">${e.chip}</span></div>`).join("");
   logList.scrollTop = logList.scrollHeight;
-  // 无尽模式勾选框状态 + 自动存档提示（对局结束/重开时服务端自动落盘）
+  // 无尽/自由移动勾选框状态 + 自动存档提示（对局结束/重开时服务端自动落盘）
   const endlessOn = !!g.endless;
   $("chk-endless").checked = endlessOn;
   $("endless-box").classList.toggle("on", endlessOn);
+  const freeOn = !!g.free;
+  $("chk-free").checked = freeOn;
+  $("free-box").classList.toggle("on", freeOn);
   $("log-saved").textContent = g.saved_count
     ? `· 已自动保存 ${g.saved_count} 局${g.last_saved ? `（最近 ${g.last_saved}）` : ""}`
     : "";
@@ -346,19 +386,27 @@ boardEl.addEventListener("click", e => {
   if (!el) return;
   const log = +el.dataset.log;
   if (selected >= 0 && targets.includes(log)) {
-    api("move", { from: selected, to: log }).then(s => {
+    // 按被走子所属方选接口：模型方的子 → model_move 替模型走（自由移动下双方任意子皆可）
+    const isModelPick = selectedSide !== state.player_side;
+    api(isModelPick ? "model_move" : "move", { from: selected, to: log }).then(s => {
       if (s) applyState(s, false);
-      else { selected = -1; targets = []; syncBoard(); }
+      else { selected = -1; selectedSide = null; targets = []; syncBoard(); }
     });
     return;
   }
   const piece = state.board[log];
   const mine = piece && (piece === "wolf") === (state.player_side === "wolf");
-  if (state.turn === state.player_side && mine) {
-    const moves = state.legal.filter(m => m.from === log);
+  const myTurn = state.turn === state.player_side;
+  const hasMoveAt = piece && state.legal.some(m => m.from === log && (!state.free || m.side === piece));
+  // 自己回合选自己的子；手动模式轮到模型可替模型走；自由移动模式双方棋子皆可自由走
+  const canSelect = state.free ? hasMoveAt
+    : (piece && ((myTurn && mine) || (!myTurn && state.manual && !mine)));
+  if (canSelect) {
+    const moves = state.legal.filter(m => m.from === log && (!state.free || m.side === piece));
     selected = moves.length ? log : -1;
+    selectedSide = piece;
     targets = moves.map(m => m.to);
-  } else { selected = -1; targets = []; }
+  } else { selected = -1; selectedSide = null; targets = []; }
   syncBoard();
 });
 
@@ -370,11 +418,12 @@ $("btn-undo").onclick = doUndo;
 $("btn-switch").onclick = doSwitch;
 $("btn-restart").onclick = doRestart;
 $("btn-mode").onclick = doMode;
-// 手动模式：点右侧推荐走法替模型走棋
+// 自动/手动模式：候选行点选即走棋 —— 轮到模型时替模型走，轮到玩家时走玩家自己的子
 $("an-list").addEventListener("click", e => {
   const row = e.target.closest(".pick-row");
-  if (!row || busy || !state || !state.manual || !state.model_to_move) return;
-  api("model_move", { from: +row.dataset.from, to: +row.dataset.to }).then(s => {
+  if (!row || busy || !state || state.terminal) return;
+  const isModelPick = state.turn !== state.player_side;
+  api(isModelPick ? "model_move" : "move", { from: +row.dataset.from, to: +row.dataset.to }).then(s => {
     if (s) applyState(s, false);
   });
 });
@@ -383,6 +432,31 @@ $("chk-endless").addEventListener("change", ev => {
     if (s) applyState(s, false);
     else ev.target.checked = !ev.target.checked;
   });
+});
+$("chk-free").addEventListener("change", ev => {
+  api("free", { on: ev.target.checked }).then(s => {
+    if (s) applyState(s, false);
+    else ev.target.checked = !ev.target.checked;
+  });
+});
+// 悬浮候选行（轮到模型或玩家时均可）→ 棋盘上预览这步棋（起子/落点/被吃子）
+function setHover(m) {
+  hover = m;
+  syncBoard();
+}
+$("an-list").addEventListener("mouseover", e => {
+  if (busy || !state || state.terminal) return;
+  const row = e.target.closest(".pick-row");
+  if (row) {
+    setHover({ from: +row.dataset.from, to: +row.dataset.to,
+               captured: row.dataset.captured !== undefined ? +row.dataset.captured : null });
+  }
+});
+$("an-list").addEventListener("mouseout", e => {
+  if (hover === null) return;
+  const row = e.target.closest(".pick-row");
+  const rel = e.relatedTarget && e.relatedTarget.closest ? e.relatedTarget.closest(".pick-row") : null;
+  if (row && !rel) setHover(null);
 });
 document.addEventListener("keydown", ev => {
   if (ev.key === "u" || ev.key === "U") doUndo();
