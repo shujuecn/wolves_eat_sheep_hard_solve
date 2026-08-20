@@ -203,6 +203,9 @@ Web 版功能与实现详见 **[web/README.md](web/README.md)**；
 [web/USAGE.md](web/USAGE.md)**——其中「一键导出最优棋谱」可对任意当前局面，在
 “不假设对手犯错（每步都是表库最强防守）”的前提下导出 **赢 / 和棋** 的最长强制
 棋谱（最多 10 条，5 列多行高清 PNG，含目标 · 全程步数 · 先走方）。
+另有随仓库分发的 **开局库**（`web/opening_book.json`，前 6 个半回合定点走法，
+开局即最精准：狼在初始局面必走中路跳吃保和、羊走最快胜线），统计与生成见
+`tools/opening_book.py`（开局树逐步结论分布 + 全部首着分析）。
 
 ---
 
@@ -219,8 +222,10 @@ Web 版功能与实现详见 **[web/README.md](web/README.md)**；
 │   ├── verify.cpp         # 表库一致性验证
 │   ├── crosscheck.cpp     # 走法生成对拍（vs Python rules.py）
 │   ├── selfcheck.cpp      # 规则引擎自检
-│   └── dump_opening_book.cpp  # 开局库导出
+│   ├── dump_opening_book.cpp  # 开局库导出
+│   └── opening_book.py    # 开局库生成与开局统计（纯 Python + 表库，Web 模型开局定点走子）
 ├── web/                   # 网页版人机对战（Python 标准库后端 + 单文件前端，纯表库引擎）
+│   └── opening_book.json  # 开局库（前 6 个半回合定点走法，随仓库分发）
 ├── wolves_eat_sheep_game/ # 游戏规则库 rules.py（纯标准库，Web 后端复用）
 ├── tests/crosscheck/      # 对拍脚本
 ├── data/ws_tb_dtc_260819/ # 已解表库输出（dtc_k04..15.bin，共约 18 GB，gitignore）

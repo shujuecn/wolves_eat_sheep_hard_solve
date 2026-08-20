@@ -238,6 +238,16 @@ def game_to_fen(game: GameState) -> str:
     return "/".join(rows) + " " + ("w" if game.turn == WOLF else "s") + " " + str(game.move_count)
 
 
+def book_key(cells, turn) -> str:
+    """开局库局面 key：25 格按行拼串（w/s/.）+ 回合（w/s）。与 tools/opening_book.py
+    生成的开局库 JSON 的 key 完全一致；cells 为 25 长度可迭代对象。"""
+    return "".join(("w" if c == WOLF else "s" if c == SHEEP else ".") for c in cells) \
+        + ":" + ("w" if turn == WOLF else "s")
+
+
+BOOK_PATH = ROOT / "web" / "opening_book.json"
+
+
 class Session:
     def __init__(self, tb: Tablebase):
         self.tb = tb
@@ -256,6 +266,18 @@ class Session:
         self.last_saved = None      # 最近一次存档文件名
         self._seen = {self._pos_key(self.game)}  # 本局出现过的局面 key（模型防重复用）
         self._pick_cache = None     # 同一局面内模型选步缓存（(fen, choice)）
+        self.opening_book = None    # 开局库：web/opening_book.json（前 book_max_plies 个半回合）
+        self.book_max_plies = 0
+        self.book_hits = 0          # 本局开局库命中次数（日志/统计用）
+        try:
+            if BOOK_PATH.exists():
+                with open(BOOK_PATH, encoding="utf-8") as f:
+                    bj = json.load(f)
+                self.opening_book = bj.get("positions") or {}
+                self.book_max_plies = int(bj.get("max_plies", 0) or 0)
+        except (OSError, ValueError):
+            self.opening_book = None
+            self.book_max_plies = 0
 
     def _new_game(self) -> GameState:
         """新建一局（官方规则含 5 次重复判和；无尽/自由移动 → 不设步数上限）。"""
@@ -386,7 +408,24 @@ class Session:
         sel = fresh if fresh else pool
         min_osc = min(m["osc"] for m in sel)
         sel = [m for m in sel if m["osc"] == min_osc]
+        # 开局库：开局前几个半回合（move_count < book_max_plies）按书中优选序定点选步——
+        # 必胜取最快、和棋保和、必败拖最久，且同档不再随机摇摆 → 开局走法稳定精准。
+        node = None
+        if self.opening_book and g.move_count < self.book_max_plies:
+            node = self.opening_book.get(book_key(
+                (g.board[i // 5][i % 5] for i in range(25)), g.turn))
+        if node and node.get("m"):
+            order = {(m[0], m[1]): i for i, m in enumerate(node["m"])}
+            cand = [m for m in sel
+                    if (m["from"][0] * 5 + m["from"][1], m["to"][0] * 5 + m["to"][1]) in order]
+            if cand:
+                chosen = min(cand, key=lambda m: order[
+                    (m["from"][0] * 5 + m["from"][1], m["to"][0] * 5 + m["to"][1])])
+                chosen["book"] = True
+                self.book_hits += 1
+                return chosen
         chosen = random.choice(sel)
+        chosen["book"] = False
         return chosen
 
     def choose_model(self):
@@ -402,7 +441,10 @@ class Session:
             self._pick_cache = (fen, choice)
         if choice is None:
             return None, None, f"硬解表库 k={self.game.sheep_count} 未求解"
-        return choice["from"], choice["to"], f"硬解表库 k={self.game.sheep_count} 最优解"
+        note = f"硬解表库 k={self.game.sheep_count} 最优解"
+        if choice.get("book"):
+            note += "（开局库）"
+        return choice["from"], choice["to"], note
 
     def is_optimal_move(self, fr: int, to: int) -> bool:
         """该走法 (fr,to) 是否属于当前局面下当前回合方的“最优解档”。
