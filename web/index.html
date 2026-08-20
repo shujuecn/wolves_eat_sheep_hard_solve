@@ -105,7 +105,12 @@
   /* ============ 右侧：对局信息 ============ */
   #right{flex:1;min-width:320px;display:flex;flex-direction:column;gap:12px;min-height:0}
   #analysis{background:rgba(0,0,0,.35);border-radius:10px;padding:12px 14px}
-  #an-head{font-size:19px;font-weight:900;margin-bottom:4px}
+  #an-title{display:flex;align-items:center;gap:12px}
+  #an-head{font-size:19px;font-weight:900}
+  #btn-export{margin-left:auto;background:#3a5f9e;color:#fff;padding:8px 18px;font-size:16px;
+    font-weight:800;border:none;border-radius:8px;cursor:pointer;font-family:inherit;flex:none}
+  #btn-export:hover{filter:brightness(1.15)}
+  #btn-export:disabled{filter:grayscale(.7);cursor:not-allowed}
   #an-verdict{font-size:26px;font-weight:900;margin-bottom:10px}
   #an-list{display:flex;flex-direction:column;gap:4px;max-height:min(36vh,380px);overflow-y:auto;overflow-x:hidden;padding-right:2px;scrollbar-width:none}
   #an-list::-webkit-scrollbar{display:none;width:0;height:0}
@@ -141,6 +146,67 @@
   .lg-row .tag.best{color:#1c1006;background:var(--gold)}
   .lg-row .tag.self{color:#ffd9b0;background:rgba(255,150,60,.22);border:1px solid rgba(255,170,90,.45)}
   .lg-row .chip{font-size:16px;font-weight:800;color:#ffe9c4;background:rgba(0,0,0,.4);padding:1px 10px;border-radius:10px;flex:0 0 auto}
+
+  /* ============ 棋谱导出：按钮 / 选项页 / 计算锁屏 / 结果面板 ============ */
+  .modal-mask{position:fixed;inset:0;z-index:900;background:rgba(10,6,2,.72);
+    display:flex;align-items:center;justify-content:center}
+  .modal{width:min(700px,92vw);max-height:86vh;overflow:auto;color:#f0e6d8;
+    background:linear-gradient(160deg,#3a2a19,#2a1c10);border:2px solid #6b4a2a;border-radius:14px;
+    padding:22px 26px;box-shadow:0 18px 60px rgba(0,0,0,.6)}
+  .m-title{font-size:24px;font-weight:900;margin-bottom:12px;color:var(--gold)}
+  .m-body{font-size:16px;line-height:1.7}
+  .m-body b{color:var(--gold)}
+  .m-body ul{margin:8px 0 4px;padding-left:22px}
+  .m-body li{margin:7px 0}
+  .exp-field{display:flex;align-items:center;gap:12px;margin:12px 0;font-size:19px;flex-wrap:wrap}
+  .exp-label{flex:0 0 88px;font-weight:800;color:#ffe9c4;font-size:19px;white-space:nowrap}
+  .exp-opts{display:flex;gap:14px;flex-wrap:wrap;align-items:center}
+  .exp-opts label{display:flex;align-items:center;gap:6px;cursor:pointer;font-weight:700;font-size:19px}
+  .exp-opts label.dis{opacity:.35;cursor:not-allowed}
+  .exp-opts input{width:18px;height:18px;accent-color:#8ce07c;margin:0;cursor:pointer}
+  .exp-rules{margin:14px 0 0;padding:12px 16px;background:rgba(0,0,0,.32);
+    border:1px solid rgba(107,74,42,.65);border-radius:10px}
+  .exp-rules-title{font-size:17px;font-weight:900;color:var(--gold);margin-bottom:6px}
+  .exp-rules ul{margin:0;padding-left:22px;font-size:16px;line-height:1.75;color:#e8dcc8}
+  .exp-rules li{margin:3px 0}
+  .prog-track{width:min(430px,80vw);height:16px;background:rgba(0,0,0,.45);
+    border:1px solid #6b4a2a;border-radius:9px;margin:20px auto 10px;overflow:hidden}
+  #prog-bar{height:100%;width:0%;background:linear-gradient(90deg,#e0a83e,#ffd97a);
+    border-radius:9px;transition:width .25s ease}
+  .prog-meta{display:flex;justify-content:space-between;width:min(430px,80vw);
+    margin:0 auto;font-size:18px;font-weight:900;color:#ffe9c4}
+  #prog-time{color:#9dd7ff;font-variant-numeric:tabular-nums}
+  .exp-fail-title{font-size:24px;font-weight:900;color:#ff9d9d;margin:24px 0 8px}
+  .exp-fail-sub{font-size:16px;color:#e8dcc8;line-height:1.7}
+  .m-btns{display:flex;justify-content:flex-end;gap:12px;margin-top:18px}
+  .m-btns button{padding:10px 24px;font-size:16px;font-weight:800;border:none;border-radius:9px;
+    cursor:pointer;font-family:inherit}
+  #exp-cancel{background:#5a4630;color:#ffe9c4}
+  #exp-confirm{background:#3a7d4a;color:#fff}
+  .m-btns button:hover{filter:brightness(1.15)}
+  #lockOverlay{position:fixed;inset:0;z-index:1000;background:rgba(10,6,2,.88);
+    display:flex;align-items:center;justify-content:center}
+  .lock-card{text-align:center;color:#ffe9c4;font-size:26px;font-weight:900;letter-spacing:1px}
+  .lock-card .sub{font-size:17px;color:#c9b393;margin-top:12px;font-weight:600}
+  .spinner{width:66px;height:66px;margin:0 auto 24px;border:6px solid rgba(242,193,78,.25);
+    border-top-color:var(--gold);border-radius:50%;animation:spin .9s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  #expPanel{position:fixed;inset:0;z-index:950;background:#1f170d;overflow:auto;
+    padding:22px 28px 80px;color:#f0e6d8}
+  .panel-head{display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:8px}
+  .panel-title{font-size:25px;font-weight:900;color:var(--gold)}
+  .panel-note{font-size:15px;color:#c9b393;line-height:1.5;white-space:normal}
+  #exp-close{margin-left:auto;padding:10px 24px;font-size:16px;font-weight:800;border:none;
+    border-radius:9px;cursor:pointer;background:#6b4a2a;color:#ffe9c4;font-family:inherit}
+  #exp-close:hover{filter:brightness(1.15)}
+  .sheet{background:rgba(0,0,0,.38);border-radius:12px;padding:16px 18px;margin-top:18px}
+  .sheet-head{display:flex;align-items:center;gap:14px;margin-bottom:12px;flex-wrap:wrap}
+  .sheet-title{font-size:19px;font-weight:800;color:#ffe9c4}
+  .dl-btn{margin-left:auto;padding:9px 20px;font-size:15px;font-weight:800;border:none;border-radius:9px;
+    cursor:pointer;background:#3a5f9e;color:#fff;font-family:inherit}
+  .dl-btn:hover{filter:brightness(1.15)}
+  .sheet-img{display:block;max-width:100%;height:auto;border-radius:8px;border:1px solid #6b4a2a;
+    box-shadow:0 8px 28px rgba(0,0,0,.55)}
 </style>
 </head>
 <body>
@@ -164,7 +230,7 @@
       <button id="btn-undo">悔棋</button>
       <button id="btn-switch">换边</button>
       <button id="btn-restart">重开</button>
-      <button id="btn-mode" title="自动：模型自动应手；手动：模型给出最优解，由你点右侧推荐走法替模型走棋">自动模式</button>
+      <button id="btn-mode" title="自动：模型自动应手；手动：模型给出最优解，由你点右侧推荐走法替模型走棋。自由移动期间强制手动，无法切回自动">自动模式</button>
       <label id="endless-box" title="勾选后解除 150 步上限，超过仍继续对局并保留最优解提示与对局记录">
         <input type="checkbox" id="chk-endless"> 无尽模式
       </label>
@@ -175,7 +241,10 @@
   </div>
   <div id="right">
     <div id="analysis">
-      <div id="an-head"></div>
+      <div id="an-title">
+        <span id="an-head"></span>
+        <button id="btn-export" title="按当前局面导出最优棋谱：选先走方/目标/条数后生成 5 列多行高清 PNG；计算期间对局暂停并禁止操作">导出最优棋谱</button>
+      </div>
       <div id="an-verdict"></div>
       <div id="an-list"></div>
     </div>
@@ -186,11 +255,98 @@
   </div>
 </div>
 
+<!-- ============ 棋谱导出：选项页（视角随 Web 端固定；选目标/条数/步数起点/最大步数） ============ -->
+<div id="expModal" class="modal-mask" style="display:none">
+  <div class="modal">
+    <div class="m-title">导出最优棋谱</div>
+    <div class="m-body">
+      <div class="exp-field">
+        <span class="exp-label">先走一方</span>
+        <span class="exp-opts" id="exp-champ-fixed">狼（当前轮到，固定）</span>
+      </div>
+      <div class="exp-field">
+        <span class="exp-label">选择目标</span>
+        <span class="exp-opts">
+          <label><input type="radio" name="exp-target" value="wolf_win"> 狼胜</label>
+          <label><input type="radio" name="exp-target" value="sheep_win"> 羊胜</label>
+          <label><input type="radio" name="exp-target" value="draw"> 和棋</label>
+        </span>
+      </div>
+      <div class="exp-field">
+        <span class="exp-label">选择条数</span>
+        <span class="exp-opts">
+          <label><input type="radio" name="exp-count" value="1" checked> 1</label>
+          <label><input type="radio" name="exp-count" value="2"> 2</label>
+          <label><input type="radio" name="exp-count" value="3"> 3</label>
+          <label><input type="radio" name="exp-count" value="4"> 4</label>
+          <label><input type="radio" name="exp-count" value="5"> 5</label>
+          <label><input type="radio" name="exp-count" value="6"> 6</label>
+          <label><input type="radio" name="exp-count" value="7"> 7</label>
+          <label><input type="radio" name="exp-count" value="8"> 8</label>
+          <label><input type="radio" name="exp-count" value="9"> 9</label>
+          <label><input type="radio" name="exp-count" value="10"> 10</label>
+        </span>
+      </div>
+      <div class="exp-field">
+        <span class="exp-label">步数起点</span>
+        <span class="exp-opts">
+          <label><input type="radio" name="exp-num" value="game" checked> 从当前步数计</label>
+          <label><input type="radio" name="exp-num" value="one"> 从 1 计</label>
+        </span>
+      </div>
+      <div class="exp-field">
+        <span class="exp-label">最大步数</span>
+        <span class="exp-opts">
+          <label><input type="radio" name="exp-max" value="150" checked> 150</label>
+          <label><input type="radio" name="exp-max" value="160"> 160</label>
+        </span>
+      </div>
+      <div class="exp-rules">
+        <div class="exp-rules-title">导出须知</div>
+        <ul>
+          <li>棋谱视角随当前 Web 端：先走方固定为当前轮到方，不因选项而切换。</li>
+          <li>目标与当前视角不符时给出可改选的提示。</li>
+          <li>实际总步数超过设定最大步数的最优解不进棋谱。</li>
+          <li>计算期间对局暂停、禁止操作，耗时较长；导出不改动当前局面。</li>
+        </ul>
+      </div>
+    </div>
+    <div class="m-btns">
+      <button id="exp-cancel">取消</button>
+      <button id="exp-confirm">确认</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 计算期间锁屏（禁止任何操作） ============ -->
+<div id="lockOverlay" style="display:none">
+  <div class="lock-card">
+    <div class="spinner"></div>
+    <div>正在计算并生成最优棋谱…</div>
+    <div class="prog-track"><div id="prog-bar"></div></div>
+    <div class="prog-meta"><span id="prog-pct">0%</span><span id="prog-time">0.00s</span></div>
+    <div class="sub" id="prog-phase">准备中…（对局已暂停 · 禁止操作 · 请勿关闭页面）</div>
+  </div>
+</div>
+
+<!-- ============ 结果面板（5 列多行棋谱预览 + 高清 PNG 下载） ============ -->
+<div id="expPanel" style="display:none">
+  <div class="panel-head">
+    <span class="panel-title" id="exp-title">最优棋谱导出完成</span>
+    <span class="panel-note" id="exp-note"></span>
+    <button id="exp-close">关闭（恢复对局）</button>
+  </div>
+  <div id="exp-sheets"></div>
+</div>
+
 <script>
 "use strict";
 const LOG = "ABCDE";
 let state = null, selected = -1, selectedSide = null, targets = [], lastModelMove = null, busy = false, advTimer = null;
 let hover = null;   // 手动模式悬浮推荐行时的路径预览 {from,to,captured}
+let uiLocked = false;      // 导出选项页/计算/结果页期间锁定一切操作（暂停对局）
+let expPanelOpen = false;  // 结果面板是否打开（面板打开期间保持对局暂停）
+let expSheets = [];        // 已渲染的大图 canvas（供下载）
 
 const $ = id => document.getElementById(id);
 const boardEl = $("board");
@@ -198,6 +354,7 @@ const logList = $("log-list");
 const name = i => LOG[i % 5] + (Math.floor(i / 5) + 1);   // 逻辑坐标记法 a1..e5
 const NUM = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳";
 const numTag = i => (i < NUM.length ? NUM[i] : String(i + 1));
+const plainVerdict = v => String(v || "").replace(/·最快\d+步$/, "");   // “羊胜·最快37步”→“羊胜”
 
 // ---------- 棋盘骨架：只建一次，之后原地增量更新 ----------
 const cells = [];
@@ -265,6 +422,19 @@ async function api(cmd, extra) {
   } catch (e) { showError(String(e)); return null; }
   finally { busy = false; }
 }
+// 同 api()，但返回完整响应；失败时返回 {ok:false, error}（由调用方展示，不自动弹错）
+async function apiRaw(cmd, extra) {
+  busy = true;
+  try {
+    const res = await fetch("/api", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(Object.assign({ cmd }, extra || {})),
+    });
+    return await res.json();
+  } catch (e) { return { ok: false, error: String(e) }; }
+  finally { busy = false; }
+}
 function showError(msg) {
   $("error").textContent = "⚠ " + msg;
   setTimeout(() => { if ($("error").textContent.startsWith("⚠ ")) $("error").textContent = ""; }, 3000);
@@ -279,7 +449,7 @@ function applyState(s, clearLine) {
   syncBoard();
   renderRight();
   if (advTimer) { clearTimeout(advTimer); advTimer = null; }
-  if (!s.terminal && s.model_to_move && !s.model_move && !s.manual && !s.free) {
+  if (!uiLocked && !expPanelOpen && !s.terminal && s.model_to_move && !s.model_move && !s.manual && !s.free) {
     advTimer = setTimeout(async () => {
       const s2 = await api("advance");
       if (s2) applyState(s2, false);
@@ -372,16 +542,19 @@ function renderRight() {
   $("log-saved").textContent = g.saved_count
     ? `· 已自动保存 ${g.saved_count} 局${g.last_saved ? `（最近 ${g.last_saved}）` : ""}`
     : "";
-  // 自动/手动模式按钮
+  // 自动/手动模式按钮（自由移动期间强制手动，禁用切换）
   $("btn-mode").textContent = g.manual ? "手动模式" : "自动模式";
   $("btn-mode").classList.toggle("on", g.manual);
+  $("btn-mode").disabled = !!g.free;
+  // 导出最优棋谱按钮：需已选阵营、未终局、非自由移动、且当前未被锁定/计算
+  $("btn-export").disabled = !(g.player_side && !g.terminal && !g.free && !uiLocked && !busy);
 }
 
 // ---------- 交互 ----------
-function chooseSide(side) { api("choose", { side }).then(s => { if (s) applyState(s, false); }); }
+function chooseSide(side) { if (uiLocked || expPanelOpen) return; api("choose", { side }).then(s => { if (s) applyState(s, false); }); }
 
 boardEl.addEventListener("click", e => {
-  if (busy || !state || state.terminal) return;
+  if (busy || uiLocked || expPanelOpen || !state || state.terminal) return;
   const el = e.target.closest(".cell");
   if (!el) return;
   const log = +el.dataset.log;
@@ -410,10 +583,14 @@ boardEl.addEventListener("click", e => {
   syncBoard();
 });
 
-function doUndo() { api("undo").then(s => { if (s) applyState(s, false); }); }
-function doSwitch() { api("switch").then(s => { if (s) applyState(s, false); }); }
-function doRestart() { api("restart").then(s => { if (s) applyState(s, false); }); }
-function doMode() { api("mode", { manual: !state.manual }).then(s => { if (s) applyState(s, false); }); }
+function doUndo() { if (uiLocked || expPanelOpen) return; api("undo").then(s => { if (s) applyState(s, false); }); }
+function doSwitch() { if (uiLocked || expPanelOpen) return; api("switch").then(s => { if (s) applyState(s, false); }); }
+function doRestart() { if (uiLocked || expPanelOpen) return; api("restart").then(s => { if (s) applyState(s, false); }); }
+function doMode() {
+  if (uiLocked || expPanelOpen) return;
+  if (state.free) { showError("自由移动模式下强制手动模式，无法切换回自动模式（请先关闭自由移动）"); return; }
+  api("mode", { manual: !state.manual }).then(s => { if (s) applyState(s, false); });
+}
 $("btn-undo").onclick = doUndo;
 $("btn-switch").onclick = doSwitch;
 $("btn-restart").onclick = doRestart;
@@ -421,19 +598,21 @@ $("btn-mode").onclick = doMode;
 // 自动/手动模式：候选行点选即走棋 —— 轮到模型时替模型走，轮到玩家时走玩家自己的子
 $("an-list").addEventListener("click", e => {
   const row = e.target.closest(".pick-row");
-  if (!row || busy || !state || state.terminal) return;
+  if (!row || busy || uiLocked || expPanelOpen || !state || state.terminal) return;
   const isModelPick = state.turn !== state.player_side;
   api(isModelPick ? "model_move" : "move", { from: +row.dataset.from, to: +row.dataset.to }).then(s => {
     if (s) applyState(s, false);
   });
 });
 $("chk-endless").addEventListener("change", ev => {
+  if (uiLocked || expPanelOpen) { ev.target.checked = !ev.target.checked; return; }
   api("endless", { on: ev.target.checked }).then(s => {
     if (s) applyState(s, false);
     else ev.target.checked = !ev.target.checked;
   });
 });
 $("chk-free").addEventListener("change", ev => {
+  if (uiLocked || expPanelOpen) { ev.target.checked = !ev.target.checked; return; }
   api("free", { on: ev.target.checked }).then(s => {
     if (s) applyState(s, false);
     else ev.target.checked = !ev.target.checked;
@@ -445,7 +624,7 @@ function setHover(m) {
   syncBoard();
 }
 $("an-list").addEventListener("mouseover", e => {
-  if (busy || !state || state.terminal) return;
+  if (busy || uiLocked || expPanelOpen || !state || state.terminal) return;
   const row = e.target.closest(".pick-row");
   if (row) {
     setHover({ from: +row.dataset.from, to: +row.dataset.to,
@@ -459,10 +638,381 @@ $("an-list").addEventListener("mouseout", e => {
   if (row && !rel) setHover(null);
 });
 document.addEventListener("keydown", ev => {
+  if (uiLocked || expPanelOpen) return;
   if (ev.key === "u" || ev.key === "U") doUndo();
   else if (ev.key === "s" || ev.key === "S") doSwitch();
   else if (ev.key === "r" || ev.key === "R") doRestart();
 });
+
+// ---------- 棋谱导出（一键分析并导出 ≤3 条“赢或和”的最优棋谱） ----------
+function lockUI() { uiLocked = true; if (advTimer) { clearTimeout(advTimer); advTimer = null; } }
+function unlockUI() { uiLocked = false; }
+
+// 选项页默认值：视角随 Web 端固定 —— 先走方永远=当前轮到方（不允许切换）；
+// 目标=按当前局面结论预选（走棋方若必败则提示“无法生成最优棋谱”）
+function exportDefaults() {
+  const champ = state.turn;
+  const v = state.verdict && state.verdict.label;
+  let target;
+  if (v === "和棋") target = "draw";
+  else if (v === "狼胜") target = champ === "wolf" ? "wolf_win" : "sheep_win";
+  else if (v === "羊胜") target = champ === "sheep" ? "sheep_win" : "wolf_win";
+  else target = "draw";
+  return [champ, target];
+}
+
+// 目标与先走方约束（先走方固定为当前轮到方）：狼先走只能选 狼胜/和棋；羊先走只能选 羊胜/和棋
+function syncExportTargets() {
+  const champ = state.turn;
+  const gw = document.querySelector('input[name="exp-target"][value="wolf_win"]');
+  const gs = document.querySelector('input[name="exp-target"][value="sheep_win"]');
+  gw.disabled = champ !== "wolf";
+  gs.disabled = champ !== "sheep";
+  gw.closest("label").classList.toggle("dis", gw.disabled);
+  gs.closest("label").classList.toggle("dis", gs.disabled);
+  const checked = document.querySelector('input[name="exp-target"]:checked');
+  if (checked && checked.disabled) {
+    document.querySelector('input[name="exp-target"][value="draw"]').checked = true;
+  }
+}
+
+function openExportModal() {
+  if (!state || uiLocked || expPanelOpen || busy) return;
+  if (!state.player_side) return showError("请先选择执棋方");
+  if (state.terminal) return showError("对局已结束，没有可导出的最优棋谱");
+  if (state.free) return showError("自由移动（摆子）模式不提供棋谱导出");
+  lockUI();                       // 选项页一出现即暂停对局（清掉模型应手计时器）
+  const [ch, tg] = exportDefaults();
+  $("exp-champ-fixed").textContent = (ch === "wolf" ? "狼" : "羊") + "（当前轮到 · 视角随 Web 端）";
+  const tgt = document.querySelector('input[name="exp-target"][value="' + tg + '"]');
+  if (tgt) tgt.checked = true;
+  syncExportTargets();
+  $("expModal").style.display = "flex";
+}
+function closeExportModal(resume) {
+  $("expModal").style.display = "none";
+  if (resume) {
+    unlockUI();
+    api("state").then(s => { if (s) applyState(s, false); });   // 恢复模型自动应手/交互
+  }
+}
+$("exp-cancel").onclick = () => closeExportModal(true);
+
+$("exp-confirm").onclick = startExport;
+
+// ---------- 导出进度（进度条 / 百分比 / 耗时秒·2 位小数） ----------
+function resetProg() {
+  $("prog-bar").style.width = "0%";
+  $("prog-pct").textContent = "0%";
+  $("prog-time").textContent = "0.00s";
+  $("prog-phase").textContent = "准备中…";
+}
+function setProg(pct, phase, secs) {
+  const p = Math.max(0, Math.min(100, pct || 0));
+  $("prog-bar").style.width = p.toFixed(1) + "%";
+  $("prog-pct").textContent = Math.round(p) + "%";
+  $("prog-phase").textContent = phase || "…";
+  $("prog-time").textContent = secs.toFixed(2) + "s";
+}
+function showExportFail(msg) {
+  unlockUI();                               // 计算失败/被拒：恢复对局（局面未变）
+  expPanelOpen = true;
+  $("exp-title").textContent = "导出未完成";
+  $("exp-sheets").innerHTML = "";
+  const note = $("exp-note");
+  note.innerHTML = "";
+  const t = document.createElement("div");
+  t.className = "exp-fail-title";
+  t.textContent = "无法生成最优棋谱";
+  const s = document.createElement("div");
+  s.className = "exp-fail-sub";
+  s.textContent = msg;
+  note.append(t, s);
+  $("expPanel").style.display = "block";
+}
+// 下载文件名编码：8 位，只含 数字+英文大小写（不掺中文，避免歧义）。
+// 种子含 局面(整局唯一)/全程步数/首着/时间戳/下载序号/随机 → 同局面多次下载也绝不重名
+let _dlSeq = 0;
+function fnv1a(s) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h >>> 0;
+}
+function sheetCode(pos, line) {
+  const first = line.moves[0];
+  const seed = `${pos.fen}|${line.plies}|${first.from}-${first.to}|${Date.now()}|${_dlSeq++}|${Math.random()}`;
+  const DG = "0123456789";
+  const EN = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+  const B62 = DG + EN;
+  const mix = s => {
+    let h = fnv1a(s);
+    h = Math.imul(h ^ (h >>> 16), 0x45d9f3b) >>> 0;  // 加强位混合，避免弱种子下字符相关
+    return (h ^ (h >>> 16)) >>> 0;                   // 非负，下标合法
+  };
+  // 8 位 = 必含 1 数字 + 1 英文 + 6 位随机(数字/英文大小写)
+  let code = DG[mix(seed + "#dg") % 10]
+           + EN[mix(seed + "#en") % 52];
+  for (let i = 0; i < 6; i++) code += B62[mix(seed + "#" + i) % 62];
+  return code;
+}
+
+async function pollExport(t0, liveState, startFromOne) {
+  for (;;) {
+    await new Promise(r => setTimeout(r, 250));
+    const st = await apiRaw("export_status");
+    const secs = (performance.now() - t0) / 1000;
+    if (!st || !st.ok) {
+      $("lockOverlay").style.display = "none";
+      showExportFail(st ? (st.error || "轮询导出进度失败") : "网络中断或服务无响应");
+      return;
+    }
+    setProg(st.pct, st.phase, secs);
+    if (st.done) {
+      $("lockOverlay").style.display = "none";
+      const res = st.result || { ok: false, error: "导出结果缺失" };
+      if (!res.ok) { showExportFail(res.error || "导出失败"); return; }
+      applyState(liveState, false);          // 服务端局面与提交时一致（导出只读）
+      renderExportPanel(res.export, startFromOne);
+      return;
+    }
+  }
+}
+
+async function startExport() {
+  const champion = state.turn;                 // 视角随 Web 端固定：先走方=当前轮到方
+  const target = (document.querySelector('input[name="exp-target"]:checked') || {}).value || null;
+  const count = +(document.querySelector('input[name="exp-count"]:checked') || { value: "1" }).value || 1;
+  const startFromOne = (document.querySelector('input[name="exp-num"]:checked') || {}).value === "one";
+  // 最大步数：150（默认）/ 160
+  const maxSteps = +(document.querySelector('input[name="exp-max"]:checked') || { value: "150" }).value || 150;
+  $("expModal").style.display = "none";
+  $("lockOverlay").style.display = "flex";   // 计算期间锁屏：禁止任何操作
+  resetProg();
+  const t0 = performance.now();
+  const data = await apiRaw("export_lines", { count, champion, target, max_steps: maxSteps });
+  if (!data || !data.ok) {
+    $("lockOverlay").style.display = "none";
+    showExportFail(data ? (data.error || "导出失败") : "网络中断或服务无响应");
+    return;
+  }
+  // 任务已提交（后台线程计算 + 服务端进度上报），轮询直到完成
+  pollExport(t0, data.state, startFromOne);
+}
+
+function renderExportPanel(exp, startFromOne) {
+  expPanelOpen = true;
+  $("exp-title").textContent = "最优棋谱导出完成 · 共 " + exp.lines.length + " 条";
+  $("exp-note").textContent = "";              // 结果页不留说明小字（标题已含目标/条数，棋谱图含全程/首着）
+  const wrap = $("exp-sheets");
+  wrap.innerHTML = "";
+  expSheets = [];
+  exp.lines.forEach(ln => {
+    const block = document.createElement("div");
+    block.className = "sheet";
+    const head = document.createElement("div");
+    head.className = "sheet-head";
+    const title = document.createElement("span");
+    title.className = "sheet-title";
+    const fm = ln.moves[0];
+    title.textContent = `解法 ${ln.no} · 目标 ${exp.goal} · 全程 ${ln.plies} 步 · ` +
+      `首着 ${fm.side === "wolf" ? "狼" : "羊"} ${name(fm.from)}→${name(fm.to)}`;
+    const dl = document.createElement("button");
+    dl.className = "dl-btn";
+    dl.textContent = "下载高清 PNG";
+    const idx = expSheets.push(null) - 1;
+    dl.onclick = () => downloadSheet(idx);
+    head.append(title, dl);
+    const img = document.createElement("img");
+    img.className = "sheet-img";
+    img.alt = `解法 ${ln.no} 棋谱`;
+    block.append(head, img);
+    wrap.append(block);
+    const canvas = buildSheetCanvas(ln, exp, 2.0, startFromOne);   // 高清大尺寸：2 倍设备分辨率
+    expSheets[idx] = { canvas, code: sheetCode(exp.position, ln) };
+    img.src = canvas.toDataURL("image/png");
+  });
+  $("expPanel").style.display = "block";
+  $("expPanel").scrollTop = 0;
+}
+
+function downloadSheet(i) {
+  const item = expSheets[i];
+  if (!item || !item.canvas) return;
+  const a = document.createElement("a");
+  a.href = item.canvas.toDataURL("image/png");
+  a.download = `狼羊棋_最优棋谱_${i + 1}_${item.code}.png`;   // 附 8 位编码（仅数字+英文），避免重名
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+$("exp-close").onclick = () => {
+  $("expPanel").style.display = "none";
+  expPanelOpen = false;
+  expSheets = [];
+  unlockUI();
+  api("state").then(s => { if (s) applyState(s, false); });
+};
+$("btn-export").onclick = openExportModal;
+
+// ---------- 棋谱画布渲染（子图只含棋盘元素；高亮：金=待走子、绿=落点、红=吃子） ----------
+function rr(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+function drawMiniBoard(ctx, X, Y, S, board, hl) {
+  const pad = Math.round(S * 0.115);            // 四周留白（含行列坐标区）
+  const ox = X + pad, oy = Y + pad;
+  const cell = (S - pad * 2) / 5;
+  // 木质圆角底板（与网页主线棋盘一致）
+  const g = ctx.createLinearGradient(X, Y, X + S, Y + S);
+  g.addColorStop(0, "#8a6a42"); g.addColorStop(1, "#6a4c2c");
+  rr(ctx, X, Y, S, S, Math.round(S * 0.07));
+  ctx.fillStyle = g; ctx.fill();
+  ctx.lineWidth = Math.max(3, Math.round(S * 0.024));
+  ctx.strokeStyle = "#4a3520";
+  ctx.stroke();
+  // 明暗格
+  for (let r = 0; r < 5; r++) {
+    for (let c = 0; c < 5; c++) {
+      const x = Math.round(ox + c * cell), y = Math.round(oy + r * cell);
+      ctx.fillStyle = (r + c) % 2 ? "rgba(255,248,230,.07)" : "rgba(25,12,4,.30)";
+      ctx.fillRect(x, y, Math.ceil(cell), Math.ceil(cell));
+    }
+  }
+  // 行列坐标（棋盘区域元素）
+  ctx.font = `900 ${Math.round(pad * 0.62)}px "PingFang SC","Microsoft YaHei",sans-serif`;
+  ctx.fillStyle = "#ffe9c4";
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  for (let c = 0; c < 5; c++) ctx.fillText(LOG[c], Math.round(ox + c * cell + cell / 2), Y + pad * 0.52);
+  for (let r = 0; r < 5; r++) ctx.fillText(String(r + 1), X + pad * 0.52, Math.round(oy + r * cell + cell / 2));
+  // 棋子（先画子，后画高亮环，外观与 CSS 阴影/虚线环一致）
+  for (let i = 0; i < 25; i++) {
+    const p = board[i];
+    if (!p) continue;
+    const r = Math.floor(i / 5), c = i % 5;
+    const cx = ox + c * cell + cell / 2, cy = oy + r * cell + cell / 2;
+    const rad = cell * 0.34;
+    const rg = ctx.createRadialGradient(cx - rad * 0.3, cy - rad * 0.35, rad * 0.15, cx, cy, rad);
+    if (p === "wolf") { rg.addColorStop(0, "#fdf3e3"); rg.addColorStop(1, "#e7cfa9"); }
+    else { rg.addColorStop(0, "#ffffff"); rg.addColorStop(1, "#e5e5da"); }
+    ctx.beginPath(); ctx.arc(cx, cy, rad, 0, Math.PI * 2);
+    ctx.fillStyle = rg; ctx.fill();
+    ctx.lineWidth = Math.max(1.5, rad * 0.07);
+    ctx.strokeStyle = "rgba(0,0,0,.16)"; ctx.stroke();
+    ctx.fillStyle = p === "wolf" ? "#c22b2b" : "#1d1d1d";
+    ctx.font = `900 ${Math.round(rad * 1.18)}px "KaiTi","STKaiti","楷体",serif`;
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText(p === "wolf" ? "狼" : "羊", cx, cy + rad * 0.06);
+  }
+  if (!hl) return;
+  // 高亮环工具：金=待走子、绿=落点、红=被吃子（含辉光）
+  const ring = (i, color, width) => {
+    const r = Math.floor(i / 5), c = i % 5;
+    const cx = ox + c * cell + cell / 2, cy = oy + r * cell + cell / 2;
+    ctx.save();
+    ctx.shadowColor = color; ctx.shadowBlur = cell * 0.13;
+    ctx.strokeStyle = color; ctx.lineWidth = width;
+    ctx.beginPath(); ctx.arc(cx, cy, cell * 0.365, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  };
+  if (hl.from != null) {
+    ring(hl.from, "#f2c14e", Math.max(2.5, cell * 0.038));
+    const r = Math.floor(hl.from / 5), c = hl.from % 5;
+    const cx = ox + c * cell + cell / 2, cy = oy + r * cell + cell / 2;
+    ctx.save();                                   // 金色虚线环（对应 CSS .hover-from::after）
+    ctx.strokeStyle = "rgba(242,193,78,.9)";
+    ctx.lineWidth = Math.max(2, cell * 0.022);
+    ctx.setLineDash([cell * 0.07, cell * 0.055]);
+    ctx.beginPath(); ctx.arc(cx, cy, cell * 0.41, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+  if (hl.to != null && hl.captured !== hl.to) ring(hl.to, "#7ce07c", Math.max(2, cell * 0.032));
+  if (hl.captured != null) ring(hl.captured, "#c22b2b", Math.max(2.5, cell * 0.042)); // 吃子红环优先
+  if (hl.to != null && !board[hl.to] && hl.captured !== hl.to) {   // 空落点绿点（对应 .hover-to.empty）
+    const r = Math.floor(hl.to / 5), c = hl.to % 5;
+    const cx = ox + c * cell + cell / 2, cy = oy + r * cell + cell / 2;
+    ctx.save();
+    ctx.shadowColor = "#7ce07c"; ctx.shadowBlur = cell * 0.12;
+    ctx.fillStyle = "rgba(124,224,124,.95)";
+    ctx.beginPath(); ctx.arc(cx, cy, cell * 0.14, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+}
+
+function buildSheetCanvas(line, exp, SCALE, startFromOne) {
+  const CELL = 300, CAP = 62, HEAD = 64, GAP = 34, PAD = 40, COLS = 5;   // 5 列多行大尺寸
+  const boards = [];
+  for (const m of line.moves) {
+    boards.push({
+      board: m.board,
+      hl: { from: m.from, to: m.to, captured: m.captured },
+      cap: { n: m.n, side: m.side, move: `${name(m.from)}→${name(m.to)}`,
+             cap: m.captured != null ? `吃${name(m.captured)}` : null },
+    });
+  }
+  boards.push({
+    board: line.final.board,
+    hl: null,
+    cap: { n: null, side: null, move: "", cap: null,
+           chip: line.final.label, reason: line.final.reason, final: true },
+  });
+  const rows = Math.ceil(boards.length / COLS);
+  const W = PAD * 2 + COLS * CELL + (COLS - 1) * GAP;
+  const H = PAD * 2 + HEAD + rows * (CELL + CAP) + (rows - 1) * GAP + 20;
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.ceil(W * SCALE);
+  canvas.height = Math.ceil(H * SCALE);
+  const ctx = canvas.getContext("2d");
+  ctx.scale(SCALE, SCALE);
+  // 页底
+  ctx.fillStyle = "#20170d";
+  ctx.fillRect(0, 0, W, H);
+  // 标题区（简洁一行：目标 · 全程实际总步数 · 先走方；最大步数设置不写入 PNG）
+  const pos = exp.position;
+  ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
+  ctx.font = `800 34px "PingFang SC","Microsoft YaHei",sans-serif`;
+  ctx.fillStyle = "#f2c14e";
+  ctx.fillText(`目标 ${exp.goal} · 全程 ${line.plies} 步 · ${pos.turn === "wolf" ? "狼" : "羊"}先走`,
+               PAD, PAD + 42);
+  // 5 列多行子图
+  boards.forEach((b, idx) => {
+    const r = Math.floor(idx / COLS), c = idx % COLS;
+    const x = PAD + c * (CELL + GAP);
+    const y = PAD + HEAD + r * (CELL + CAP + GAP);
+    drawMiniBoard(ctx, x, y, CELL, b.board, b.hl);
+    const cx = x + CELL / 2;               // 图注水平居中于子图正中
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    const ty = y + CELL + 31;
+    if (b.cap.final) {
+      ctx.font = `800 26px "PingFang SC","Microsoft YaHei",sans-serif`;
+      ctx.fillStyle = "#9dd7ff";
+      ctx.fillText(b.cap.chip, cx, ty);    // 如“狼胜·终局”
+      ctx.font = `600 20px "PingFang SC","Microsoft YaHei",sans-serif`;
+      ctx.fillStyle = "#c9b393";
+      ctx.fillText(b.cap.reason, cx, ty + 26);
+    } else {
+      const stepNo = startFromOne ? idx + 1 : b.cap.n;   // 步数起点：从 1 计 或 从当前步数计
+      ctx.font = `700 23px "PingFang SC","Microsoft YaHei",sans-serif`;
+      ctx.fillStyle = "#f0e6d8";
+      ctx.fillText(`步${stepNo} ${b.cap.side === "wolf" ? "狼" : "羊"} ${b.cap.move}` +
+                   (b.cap.cap ? ` ${b.cap.cap}` : ""), cx, ty);
+    }
+  });
+  return canvas;
+}
 
 // ---------- 启动 ----------
 buildBoard();

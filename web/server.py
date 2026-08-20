@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """web/server.py — 狼羊棋 · 网页版后端（纯 Python 标准库，无第三方依赖）
 
-- POST /api：choose / move / advance / undo / switch / restart / endless / mode / free / model_move / state
+- POST /api：choose / move / advance / undo / switch / restart / endless / mode / free / model_move / state / export_lines
 - 自动存档：对局结束或手动重开时，自动把对局记录落盘到 data/saved_games/game_*.json
   （JSON 含每步走子、吃子与走完后的表库最优解结论，便于回放分析）。
 - 无尽模式（endless）：勾选后解除 150 步上限，超过后仍继续对局，
@@ -20,6 +20,12 @@
                  by 标记来源：ai=模型自动应手(最优解) / opt=玩家代走且属最优解 / self=玩家自选
     legal      —— 当前回合方全部合法走法（网页点选高亮用）
     verdict    —— 当前局面最优解（狼胜/羊胜/和棋 + 最快步数）
+- **一键导出最优棋谱（export_lines）**：基于当前局面，为当前走棋方导出 ≤3 条
+  “赢或和”的完整最优棋谱（每条含每步走棋前的棋盘布局 + 起子/落点/吃子，供前端按
+  网页“鼠标悬浮最优解”的高亮效果渲染 5 列多行高清子图）。棋谱按“对手最强防守”
+  生成：对手每步都走表库最优防守（最长拖延、绝不送分），并在官方规则下实测校验
+  终局（必须真实走到“获胜方胜”或“和棋”）。计算期间 HTTP 层加锁，禁止任何其他
+  操作；导出对局只读，不改动当前局面。
 - 引擎逻辑：全部走子决策都基于硬解表库（纯规则逆推，k=4..15 已全部解出，
   开局羊数 15 ≤ 15，整局都在表库覆盖范围内）。不再需要 DQN/神经网络。
   - 羊数 ≤ 已解出最大 k → 表库（mmap 只读）最优解应手
@@ -39,6 +45,7 @@ import os
 import random
 import re
 import sys
+import threading
 import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -47,9 +54,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))                              # hard_solve_fast
 sys.path.insert(0, str(ROOT / "wolves_eat_sheep_game"))    # rules
+sys.path.insert(0, str(Path(__file__).resolve().parent))   # exporter
 
 from rules import GameState, WOLF, SHEEP, DRAW, IDLE_LIMIT  # noqa: E402
 import hard_solve_fast as hsf  # noqa: E402
+import exporter  # noqa: E402
 
 INDEX_PATH = Path(__file__).parent / "index.html"
 SAVED_DIR = ROOT / "data" / "saved_games"   # 自动保存的对局记录（JSON 文件）
@@ -429,6 +438,28 @@ class Session:
             c[1] for c in cands if c[0] == best_rank)
         return any(c[0] == best_rank and c[1] == best_dist and c[2] == target for c in cands)
 
+    # ---------- 最优棋谱导出（只读；计算期间由 HTTP 层加锁禁止其他操作） ----------
+    def export_lines(self, count: int = 1, champion: str | None = None, target: str | None = None,
+                     max_steps: int | None = None, progress=None) -> dict:
+        """为指定视角导出 1～10 条“赢或和”最优棋谱（完整线 + 每步棋盘布局）。
+
+        champion: 'wolf'/'sheep' 先走方视角（缺省取当前轮到方）；target: 'wolf_win'/
+                  'sheep_win'/'draw' 目标结局（缺省取相应视角的表库最优结局）；
+        max_steps: 用户设定的最大总步数上限（超出该值的最优解不进棋谱）；
+        progress:  进度回调 progress(pct, phase)，用于加载界面进度条/耗时显示。
+        对局完全只读：不改动当前局面/历史/存档。计算可能耗时较长（数秒～数分钟），
+        HTTP 处理器在计算期间会拒绝所有其他指令。
+        """
+        if self.free:
+            return {"ok": False, "error": "自由移动（摆子）模式基于变体规则，不提供棋谱导出"}
+        if self.game.winner is not None:
+            return {"ok": False, "error": "对局已结束，没有可导出的最优棋谱"}
+        if self.player_side is None:
+            return {"ok": False, "error": "请先选择执棋方后再导出"}
+        return exporter.run_export(self.tb, self.game, count=count, endless=self.endless,
+                                   champion=champion, target=target,
+                                   max_steps=max_steps, progress=progress)
+
     # ---------- 走子 ----------
     def _push_log(self, side, r1, c1, r2, c2, captured_idx, by=None):
         self.log.append({
@@ -565,7 +596,12 @@ class Session:
         return True, None
 
     def set_manual(self, on: bool):
-        """开/关手动模式：开 → 模型不再自动应手，由玩家点选右侧推荐走法替模型走棋。"""
+        """开/关手动模式：开 → 模型不再自动应手，由玩家点选右侧推荐走法替模型走棋。
+
+        自由移动开启期间强制手动模式，无法自行切回自动模式。
+        """
+        if self.free and not on:
+            return False, "自由移动模式下为手动模式，无法切换回自动模式（请先关闭自由移动）"
         self.manual = bool(on)
         self._pick_cache = None
         return True, None
@@ -575,10 +611,13 @@ class Session:
 
         开启：狼可跳到任意位置或任意羊格跳吃、羊可移动到任意空地，无步数限制，
         玩家可直接点选**双方任意棋子**快速摆放/调整残局；该模式**不提供最优解更新**
-        （表库按标准规则求解，不适用该变体），并暂停模型自动应手，避免破坏摆好的
-        局面。关闭后立即按当前局面恢复标准规则与最优解提示。
+        （表库按标准规则求解，不适用该变体），并**自动切到手动模式**（期间无法切回
+        自动模式），避免模型自动应手破坏摆好的局面。关闭后保持手动模式，玩家可自行
+        切回自动模式；关闭即按当前局面恢复标准规则与最优解提示。
         """
         self.free = bool(on)
+        if on:
+            self.manual = True          # 自由移动期间强制手动（关闭后保持手动，可自行切回自动）
         self.game.free_moves = on
         self.game.idle_limit = None if on else IDLE_LIMIT
         self.game.max_moves = None if (on or self.endless) else 150
@@ -783,11 +822,44 @@ class Session:
 # HTTP 服务
 # ============================================================
 session = None
+# 棋谱导出计算期间：禁止任何其他操作（线程级加锁；计算可能耗时数秒～数分钟）
+_EXPORTING = False
+_EXPORT_LOCK = threading.Lock()
+# 导出任务进度（前端 progress bar / 百分比 / 耗时）：由后台线程更新、export_status 轮询读取
+_EXPORT_PROG = {"pct": 0.0, "phase": "准备中…", "done": False, "result": None}
+
+
+def _export_job(session, data: dict, prog: dict) -> None:
+    """后台线程执行导出计算；prog 为进度字典（pct/phase/done/result），线程安全地逐字段更新。"""
+    global _EXPORTING
+    t0 = time.time()
+    try:
+        prog["pct"] = 0.5
+        prog["phase"] = "初始化…"
+        res = session.export_lines(data.get("count", 1),
+                                   champion=data.get("champion"),
+                                   target=data.get("target"),
+                                   max_steps=data.get("max_steps"),
+                                   progress=lambda p, ph: (prog.update(pct=p, phase=ph)))
+        if res.get("ok"):
+            prog["result"] = {"ok": True, "export": res}   # 与前端轮询约定一致（含 ok/export/error）
+        else:
+            prog["result"] = {"ok": False, "error": res.get("error", "导出失败")}
+    except Exception as exc:  # noqa: BLE001
+        print(f"[web] export error: {exc}", flush=True)
+        prog["result"] = {"ok": False, "error": f"导出出错：{exc}"}
+    finally:
+        prog["pct"] = 100.0
+        prog["phase"] = "完成（{} {:.2f}s）".format("成功" if prog["result"].get("ok") else "失败",
+                                                  time.time() - t0)
+        prog["done"] = True
+        _EXPORTING = False
+        _EXPORT_LOCK.release()
 
 
 class Handler(BaseHTTPRequestHandler):
-    def log_message(self, fmt, *args):  # 精简日志
-        print("[web] " + fmt % args, flush=True)
+    def log_message(self, fmt, *args):  # 精简日志，与服务启动日志前缀一致
+        print("[狼羊棋·web] " + fmt % args, flush=True)
 
     def _send(self, code, body: bytes, ctype="application/json"):
         self.send_response(code)
@@ -818,7 +890,39 @@ class Handler(BaseHTTPRequestHandler):
             self._send(400, json.dumps({"ok": False, "error": "bad json"}).encode())
             return
         cmd = data.get("cmd", "state")
-        global session
+        global session, _EXPORTING, _EXPORT_PROG
+        if cmd == "export_lines":
+            # 提交导出任务：后台线程计算并上报进度；POST 立即返回，前端轮询 export_status
+            if _EXPORTING or not _EXPORT_LOCK.acquire(blocking=False):
+                self._send(200, json.dumps(
+                    {"ok": False, "error": "已有棋谱导出正在计算，请稍候再试"}).encode())
+                return
+            _EXPORTING = True
+            prog = {"pct": 0.0, "phase": "准备中…", "done": False, "result": None}
+            _EXPORT_PROG = prog
+            threading.Thread(target=_export_job, args=(session, data, prog), daemon=True).start()
+            body = json.dumps({"ok": True, "state": session.snapshot(), "exporting": True},
+                              ensure_ascii=False).encode()
+            self._send(200, body)
+            return
+        if cmd == "export_status":
+            # 轮询导出进度/结果（计算期间允许；done 后携带完整结果）
+            prog = _EXPORT_PROG
+            if prog is None:
+                body = {"ok": True, "done": True,
+                        "result": {"ok": False, "error": "没有正在进行的导出任务"}}
+            else:
+                body = {"ok": True, "done": prog["done"],
+                        "pct": round(prog["pct"], 1), "phase": prog["phase"]}
+                if prog["done"]:
+                    body["result"] = prog["result"]
+            self._send(200, json.dumps(body, ensure_ascii=False).encode())
+            return
+        if _EXPORTING and cmd not in ("state", "export_status"):
+            # 计算期间禁止任何操作；state/export_status 为只读轮询，允许
+            self._send(200, json.dumps(
+                {"ok": False, "error": "正在导出棋谱，计算期间禁止任何操作，请稍候…"}).encode())
+            return
         try:
             if cmd == "choose":
                 session.choose_side(data.get("side", "wolf"))
@@ -882,16 +986,15 @@ def main():
     tb = Tablebase(args.data_dir)
     session = Session(tb)
     srv = ThreadingHTTPServer((args.host, args.port), Handler)
-    print("=== 狼羊棋 · 网页版 ===", flush=True)
-    print(f"本机访问: http://{args.host}:{args.port}", flush=True)
-    print(f"远端开发(ssh 端口转发): ssh -L {args.port}:127.0.0.1:{args.port} <user>@<host>", flush=True)
-    print(f"硬解表库: {args.data_dir}（已截完 k ≤ {tb.max_k}；开局羊数 15 全程在表库覆盖内）", flush=True)
-    print("引擎: 表库纯最优解（无神经网络依赖）", flush=True)
-    print("Ctrl-C 退出。", flush=True)
+    print(f"[狼羊棋·web] 启动 (pid {os.getpid()})", flush=True)
+    print(f"  监听  http://{args.host}:{args.port}", flush=True)
+    print(f"  表库  {args.data_dir} (k ≤ {tb.max_k}，含开局局面)", flush=True)
+    print(f"  引擎  tablebase 最优解", flush=True)
+    print(f"  停止  Ctrl-C", flush=True)
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
-        print("\n再见。")
+        print("\n[狼羊棋·web] 已停止", flush=True)
 
 
 if __name__ == "__main__":
