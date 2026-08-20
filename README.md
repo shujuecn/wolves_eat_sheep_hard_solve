@@ -248,3 +248,5 @@ Web 版功能与实现详见 **[web/README.md](web/README.md)**；
 | `build/selfcheck` | 规则引擎自检 |
 | `build/dump_opening_book` | 导出开局库 JSON |
 | `python3 web/server.py` | 网页人机对战（纯表库引擎） |
+| `python3 tools/opening_book.py` | 开局库生成与开局统计（Web 模型开局定点走子） |
+| `python3 tools/bench_opening_book.py --cfg 0..3 --n N` | 自动对局 A/B：开局库开关的胜负分布与路径稳定性基准 |
