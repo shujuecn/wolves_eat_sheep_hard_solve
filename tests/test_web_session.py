@@ -6,9 +6,11 @@
 import copy
 import json
 import random
+import re
 import shutil
 import sys
 import tempfile
+from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -55,7 +57,7 @@ def session_play(ses, plies):
 
 # 清空测试存档，保证计数确定
 if SAVED.is_dir():
-    for p in SAVED.glob("game_*.json"):
+    for p in SAVED.glob("*.json"):
         p.unlink()
 
 # ============ 1. 悔棋：记录只按步数截断，玩家/模型记录都保留 ============
@@ -98,7 +100,14 @@ check("终局后已自动存档", snap["record_saved"] is True and snap["last_sa
 check("saved_count >= 1", snap["saved_count"] >= 1)
 rec_path = SAVED / snap["last_saved"]
 check("存档文件存在", rec_path.exists())
+check("存档文件名简化(无 game_/世纪前缀)",
+      re.fullmatch(r"\d{6}_\d{6}_[0-9a-f]{6}\.json", snap["last_saved"]) is not None
+      and not snap["last_saved"].startswith("game_"), snap["last_saved"])
 rec = json.loads(rec_path.read_text(encoding="utf-8"))
+# saved_at 必须按北京时间（UTC+8）记录，而非服务器本地(可能为 UTC)时间
+_act = datetime.strptime(rec["saved_at"], "%Y-%m-%d %H:%M:%S")
+_exp = datetime.strptime(srv.now_str("%Y-%m-%d %H:%M:%S"), "%Y-%m-%d %H:%M:%S")
+check("存档时间为北京时间(UTC+8)", abs((_act - _exp).total_seconds()) < 60, rec["saved_at"])
 check("存档内容: 结果/步数", rec["result"] == "和棋" and rec["move_count"] == 150
       and rec["endless"] is False and rec["final_fen"].endswith(" 150"))
 check("存档含完整对局记录", isinstance(rec["moves"], list) and len(rec["moves"]) == 1
@@ -113,7 +122,7 @@ session_play(s2, 4)
 check("新一局走 4 步", s2.game.move_count == 4 and len(s2.log) == 4)
 s2.restart()
 check("未完成局也存档", s2.saved_count() == before + 1)
-latest = max(SAVED.glob("game_*.json"), key=lambda p: p.stat().st_mtime)
+latest = max(SAVED.glob("*.json"), key=lambda p: p.stat().st_mtime)
 rec2 = json.loads(latest.read_text(encoding="utf-8"))
 check("未完成局结果标注", rec2["result"] == "未完成" and rec2["reason"] == "手动重开"
       and rec2["move_count"] == 4)
@@ -433,7 +442,7 @@ if len(s9.history) > 2:
 # ============ 8. 存档目录可写且结构完整 ============
 print("[8] 存档目录")
 check("存档目录存在", SAVED.is_dir())
-files = sorted(SAVED.glob("game_*.json"))
+files = sorted(SAVED.glob("*.json"))
 check("存档文件可列出", len(files) >= 3, f"count={len(files)}")
 
 print(f"\nALL {ok_count} CHECKS PASSED")

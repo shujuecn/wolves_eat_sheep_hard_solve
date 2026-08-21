@@ -2,8 +2,9 @@
 """web/server.py — 狼羊棋 · 网页版后端（纯 Python 标准库，无第三方依赖）
 
 - POST /api：choose / move / advance / undo / switch / restart / endless / mode / free / model_move / state / export_lines
-- 自动存档：对局结束或手动重开时，自动把对局记录落盘到 data/saved_games/game_*.json
-  （JSON 含每步走子、吃子与走完后的表库最优解结论，便于回放分析）。
+- 自动存档：对局结束或手动重开时，自动把对局记录落盘到 data/saved_games/*.json
+  （文件名简化：去掉开头的 game_ 前缀与世纪的“20”，保留两位年份，形如
+  260821_134920_31fe75.json；JSON 含每步走子、吃子与走完后的表库最优解结论，便于回放分析）。
 - 无尽模式（endless）：勾选后解除 150 步上限，超过后仍继续对局，
   最优解提示与对局记录不受影响（表库结论只依赖局面，与步数无关）。
 - 手动模式（mode/manual_move）：开 → 模型不自动应手，右侧给出推荐最优解，
@@ -48,6 +49,7 @@ import sys
 import threading
 import time
 import uuid
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -55,6 +57,17 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))                              # hard_solve_fast
 sys.path.insert(0, str(ROOT / "wolves_eat_sheep_game"))    # rules
 sys.path.insert(0, str(Path(__file__).resolve().parent))   # exporter
+
+BJ_TZ = timezone(timedelta(hours=8))   # 北京时间（UTC+8，无夏令时）
+
+
+def now_str(fmt: str) -> str:
+    """按北京时间取当前时间字符串。
+
+    服务器可能运行在 UTC 时区（本地 time.strftime 会早 8 小时），
+    存档时间/文件名一律以北京时间为准，与进程时区无关。
+    """
+    return datetime.now(BJ_TZ).strftime(fmt)
 
 from rules import GameState, WOLF, SHEEP, DRAW, IDLE_LIMIT  # noqa: E402
 import hard_solve_fast as hsf  # noqa: E402
@@ -301,10 +314,13 @@ class Session:
 
     # ---------- 自动存档 ----------
     def save_record(self) -> str | None:
-        """把当前对局记录写入 data/saved_games/game_*.json，返回文件名或 None。
+        """把当前对局记录写入 data/saved_games/*.json，返回文件名或 None。
 
         记录为一次性 JSON：时间、执棋方、结果、步数、终局 FEN，以及每一步的
         完整对局记录（含吃子、走完后的表库最优解结论），便于回放与分析。
+        文件名从“game_YYYYMMDD_HHMMSS_xxxxxx”简化为“YYMMDD_HHMMSS_xxxxxx”
+        （去掉开头的 game_ 前缀与世纪的“20”，保留两位年份；完整时间仍存于
+        saved_at 字段，一律按北京时间 UTC+8 记录）。
         """
         if not self.log:
             return None
@@ -322,10 +338,11 @@ class Session:
         else:
             result = "未完成"
             reason = "手动重开"
-        rid = time.strftime("%Y%m%d_%H%M%S") + "_" + uuid.uuid4().hex[:6]
+        rid = now_str("%y%m%d_%H%M%S") + "_" + uuid.uuid4().hex[:6]
+        # rid = YYMMDD_HHMMSS_xxxxxx（北京时间）：去掉开头 game_ 前缀与世纪“20”，保留两年份
         record = {
             "id": rid,
-            "saved_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "saved_at": now_str("%Y-%m-%d %H:%M:%S"),
             "player_side": ("wolf" if self.player_side == WOLF else
                             "sheep" if self.player_side == SHEEP else None),
             "endless": self.endless,
@@ -337,7 +354,7 @@ class Session:
             "final_fen": game_to_fen(g),
             "moves": self.log,
         }
-        name = f"game_{rid}.json"
+        name = f"{rid}.json"
         path = SAVED_DIR / name
         path.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
         self.record_saved = True
@@ -346,7 +363,7 @@ class Session:
 
     def saved_count(self) -> int:
         try:
-            return len(list(SAVED_DIR.glob("game_*.json")))
+            return len(list(SAVED_DIR.glob("*.json")))
         except OSError:
             return 0
 

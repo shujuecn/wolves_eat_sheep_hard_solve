@@ -127,8 +127,9 @@
   .an-row .cv{color:#9ecbff;margin-left:auto;white-space:nowrap}
   .an-row .exec-tag{color:#1c1006;background:var(--gold);font-size:14px;font-weight:900;padding:1px 8px;border-radius:10px}
   #log{flex:1;min-height:0;background:rgba(0,0,0,.35);border-radius:10px;padding:12px 14px;display:flex;flex-direction:column}
-  #log-head{font-size:19px;font-weight:900;margin-bottom:6px;display:flex;align-items:center}
-  #log-saved{margin-left:10px;font-size:17px;font-weight:800;color:#a8d8a0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+  #log-head{font-size:19px;font-weight:900;margin-bottom:6px;display:flex;align-items:center;white-space:nowrap}
+  #log-title{flex:0 0 auto;white-space:nowrap}
+  #log-saved{margin-left:10px;font-size:17px;font-weight:800;color:#a8d8a0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:1 1 auto}
   #log-list{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:2px;scrollbar-width:none}
   #log-list::-webkit-scrollbar{display:none;width:0;height:0}
   .lg-row{display:flex;align-items:center;gap:10px;padding:5px 10px;border-radius:6px;font-size:18px;white-space:nowrap}
@@ -249,7 +250,7 @@
       <div id="an-list"></div>
     </div>
     <div id="log">
-      <div id="log-head">对局记录<span id="log-saved"></span></div>
+      <div id="log-head"><span id="log-title">对局记录</span><span id="log-saved"></span></div>
       <div id="log-list"></div>
     </div>
   </div>
