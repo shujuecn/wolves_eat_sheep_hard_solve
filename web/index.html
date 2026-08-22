@@ -92,6 +92,10 @@
   #ctl button:hover{filter:brightness(1.15)}
   #ctl button:disabled{filter:grayscale(.7);cursor:not-allowed}
   #btn-mode.on{background:#3a5f9e;color:#fff;box-shadow:0 0 0 2px #9ecbff66}
+  #ctl button#btn-restart{background:#8e2a2a;color:#ffecec;box-shadow:0 3px 8px rgba(0,0,0,.4),0 0 0 1px rgba(255,120,120,.25)}
+  #ctl button#btn-restart:hover{background:#a23434;filter:brightness(1.1)}
+  #restart-confirm{background:#a33;color:#fff}
+  #restart-confirm:hover{background:#b33}
   #endless-box,#free-box{display:flex;align-items:center;gap:6px;padding:7px 14px;font-size:16px;font-weight:800;
     background:#33503a;color:#cfe8c8;border-radius:8px;cursor:pointer;user-select:none;white-space:nowrap;
     box-shadow:0 3px 8px rgba(0,0,0,.4)}
@@ -228,9 +232,9 @@
       <div id="error"></div>
     </div>
     <div id="ctl">
-      <button id="btn-undo">悔棋</button>
-      <button id="btn-switch">换边</button>
       <button id="btn-restart">重开</button>
+      <button id="btn-switch">换边</button>
+      <button id="btn-undo">悔棋</button>
       <button id="btn-mode" title="自动：模型自动应手；手动：模型给出最优解，由你点右侧推荐走法替模型走棋。自由移动期间强制手动，无法切回自动">自动模式</button>
       <label id="endless-box" title="勾选后解除 150 步上限，超过仍继续对局并保留最优解提示与对局记录">
         <input type="checkbox" id="chk-endless"> 无尽模式
@@ -315,6 +319,20 @@
     <div class="m-btns">
       <button id="exp-cancel">取消</button>
       <button id="exp-confirm">确认</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 重开确认弹窗 ============ -->
+<div id="restartModal" class="modal-mask" style="display:none">
+  <div class="modal" style="max-width:420px">
+    <div class="m-title">确认重开</div>
+    <div class="m-body">
+      确定要重开当前对局吗？未保存的进度会自动保存，已保存的记录不会丢失。
+    </div>
+    <div class="m-btns">
+      <button id="restart-cancel">取消</button>
+      <button id="restart-confirm">确认重开</button>
     </div>
   </div>
 </div>
@@ -587,6 +605,17 @@ boardEl.addEventListener("click", e => {
 function doUndo() { if (uiLocked || expPanelOpen) return; api("undo").then(s => { if (s) applyState(s, false); }); }
 function doSwitch() { if (uiLocked || expPanelOpen) return; api("switch").then(s => { if (s) applyState(s, false); }); }
 function doRestart() { if (uiLocked || expPanelOpen) return; api("restart").then(s => { if (s) applyState(s, false); }); }
+function openRestartConfirm() {
+  if (uiLocked || expPanelOpen) return;
+  $("restartModal").style.display = "flex";
+}
+function closeRestartConfirm() {
+  $("restartModal").style.display = "none";
+}
+function confirmRestart() {
+  closeRestartConfirm();
+  doRestart();
+}
 function doMode() {
   if (uiLocked || expPanelOpen) return;
   if (state.free) { showError("自由移动模式下强制手动模式，无法切换回自动模式（请先关闭自由移动）"); return; }
@@ -594,7 +623,9 @@ function doMode() {
 }
 $("btn-undo").onclick = doUndo;
 $("btn-switch").onclick = doSwitch;
-$("btn-restart").onclick = doRestart;
+$("btn-restart").onclick = openRestartConfirm;
+$("restart-cancel").onclick = closeRestartConfirm;
+$("restart-confirm").onclick = confirmRestart;
 $("btn-mode").onclick = doMode;
 // 自动/手动模式：候选行点选即走棋 —— 轮到模型时替模型走，轮到玩家时走玩家自己的子
 $("an-list").addEventListener("click", e => {
@@ -642,7 +673,7 @@ document.addEventListener("keydown", ev => {
   if (uiLocked || expPanelOpen) return;
   if (ev.key === "u" || ev.key === "U") doUndo();
   else if (ev.key === "s" || ev.key === "S") doSwitch();
-  else if (ev.key === "r" || ev.key === "R") doRestart();
+  else if (ev.key === "r" || ev.key === "R") openRestartConfirm();
 });
 
 // ---------- 棋谱导出（一键分析并导出 ≤3 条“赢或和”的最优棋谱） ----------
